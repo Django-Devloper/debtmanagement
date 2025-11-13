@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="card profile-card">
+  <div class="card-header">
+    <div>
+      <h1>Your profile</h1>
+      <p>Update your contact info and the extra payment you want to throw at the snowball every month.</p>
+    </div>
+  </div>
+  <div class="profile-grid">
+    <div>
+      <form method="post" class="stacked-form">
+        <label>
+          Full name
+          <input type="text" name="name" value="{{ current_user.name }}" required>
+        </label>
+        <label>
+          Email
+          <input type="email" name="email" value="{{ current_user.email }}" required>
+        </label>
+        <label>
+          Monthly extra payment (₹)
+          <input type="number" name="monthly_extra_payment" value="{{ '%.2f'|format(current_user.monthly_extra_payment) }}" min="0" step="100">
+        </label>
+        <button type="submit" class="primary">Save changes</button>
+      </form>
+    </div>
+    <aside class="profile-summary">
+      <h3>Account Overview</h3>
+      <ul>
+        <li><span>Joined</span><strong>{{ current_user.created_at.strftime('%b %d, %Y') }}</strong></li>
+        <li><span>Tracked debts</span><strong>{{ current_user.debts|length }}</strong></li>
+        <li><span>Extra payment</span><strong>₹{{ '%.0f'|format(current_user.monthly_extra_payment) }}</strong></li>
+      </ul>
+    </aside>
+  </div>
+</section>
+{% endblock %}
