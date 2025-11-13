@@ -13,6 +13,7 @@ from flask_login import (
     logout_user,
 )
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import inspect, text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
@@ -103,10 +104,28 @@ def calculate_snowball(debts: List[Debt], extra_payment: float = 0) -> SnowballS
     return SnowballSummary(total_balance, total_minimums, months, payoff_order)
 
 
+def ensure_debt_user_column():
+    """Backfill the user_id column for legacy databases."""
+
+    inspector = inspect(db.engine)
+    if "debts" not in inspector.get_table_names():
+        return
+
+    column_names = {column["name"] for column in inspector.get_columns("debts")}
+    if "user_id" in column_names:
+        return
+
+    with db.engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE debts ADD COLUMN user_id INTEGER REFERENCES users(id)")
+        )
+
+
 def setup_db():
     """Ensure database tables exist before handling requests."""
     with app.app_context():
         db.create_all()
+        ensure_debt_user_column()
 
 
 # Initialize the schema immediately so CLI/WSGI entry points behave the same.
@@ -239,6 +258,7 @@ def register():
             user.set_password(password)
             db.session.add(user)
             db.session.commit()
+            assign_legacy_debts(user)
             login_user(user)
             flash("Welcome! Your account is ready.", "success")
             return redirect(url_for("dashboard"))
@@ -257,6 +277,7 @@ def login():
         user = User.query.filter_by(email=email).first()
 
         if user and user.check_password(password):
+            assign_legacy_debts(user)
             login_user(user)
             flash("Logged in successfully.", "success")
             next_url = request.args.get("next")
@@ -306,6 +327,18 @@ def profile():
                     return redirect(url_for("profile"))
 
     return render_template("profile.html")
+
+
+def assign_legacy_debts(user: User) -> None:
+    """Attach debts created before authentication to the provided user."""
+
+    legacy_debts = Debt.query.filter(Debt.user_id.is_(None)).all()
+    if not legacy_debts:
+        return
+
+    for debt in legacy_debts:
+        debt.user_id = user.id
+    db.session.commit()
 
 
 if __name__ == "__main__":

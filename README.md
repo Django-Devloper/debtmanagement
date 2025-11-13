@@ -31,12 +31,6 @@ A minimal full-stack implementation of the snowball debt payoff concept. The pro
 
 4. Manage your profile (name, email, and monthly extra payment) at `/profile` any time.
 
-> **Schema change note:** if you ran an older version of the app before user accounts existed, delete the previous SQLite file so the new `users` table and `user_id` foreign key can be created:
->
-> ```bash
-> rm snowball.db
-> ```
->
-> Restart the dev server afterward and register again.
+> **Schema change note:** if you used an older build (before authentication) the app now auto-upgrades the `debts` table by adding the new `user_id` column on startup. Registering or logging in will automatically attach any legacy debts (those created prior to auth) to the account you signed into. If you prefer to start fresh you can still delete `snowball.db` before launching the server.
 
 The SQLite database (`snowball.db`) is created automatically on first run.
