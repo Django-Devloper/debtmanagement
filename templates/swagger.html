@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.12.0/swagger-ui.css">
+<style>
+  .swagger-hero {
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .swagger-hero h1 {
+    font-size: 2rem;
+    margin: 0;
+  }
+  .swagger-hero p {
+    margin: 0;
+    color: #5c5f66;
+  }
+  .swagger-panel {
+    background: #fff;
+    border-radius: 18px;
+    padding: 1.5rem;
+    box-shadow: 0 25px 45px rgba(15, 23, 42, 0.05);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="swagger-panel">
+  <div class="swagger-hero">
+    <div>
+      <p class="eyebrow">API Explorer</p>
+      <h1>Snowball Omni-channel APIs</h1>
+      <p>Authenticate with <code>/api/v1/auth/token</code> to try any endpoint below. Every request is automatically scoped to the JWT owner.</p>
+    </div>
+    <div>
+      <strong>Spec URL:</strong>
+      <a href="{{ spec_url }}" target="_blank" rel="noreferrer">{{ spec_url }}</a>
+    </div>
+  </div>
+  <div id="swagger-ui"></div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://unpkg.com/swagger-ui-dist@5.12.0/swagger-ui-bundle.js"></script>
+<script>
+  window.addEventListener('load', function () {
+    SwaggerUIBundle({
+      url: "{{ spec_url }}",
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      layout: 'BaseLayout',
+      docExpansion: 'none',
+      defaultModelsExpandDepth: 1,
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+    });
+  });
+</script>
+{% endblock %}
