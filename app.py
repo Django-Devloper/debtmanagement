@@ -251,7 +251,10 @@ def payoff_summary_payload(summary: PayoffSummary) -> dict:
         "total_balance": summary.total_balance,
         "total_minimums": summary.total_minimums,
         "projected_months": summary.projected_months,
-        "payoff_order": summary.payoff_order,
+        "payoff_order": [
+            {"creditor": creditor, "months": months}
+            for creditor, months in summary.payoff_order
+        ],
     }
 
 
@@ -777,6 +780,582 @@ def build_financial_snapshot(user: User) -> Dict[str, object]:
             "goal_count": len(goals),
         },
     }
+
+
+def build_openapi_spec() -> Dict[str, object]:
+    server_url = request.host_url.rstrip("/")
+
+    def schema_ref(name: str) -> Dict[str, str]:
+        return {"$ref": f"#/components/schemas/{name}"}
+
+    return {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "Snowball Finance API",
+            "version": "1.0.0",
+            "description": (
+                "Authenticated JSON endpoints for building omni-channel"
+                " debt, income, goal, and payoff experiences."
+            ),
+        },
+        "servers": [{"url": server_url}],
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "JWT",
+                    "description": "Include `Authorization: Bearer <token>` on every request.",
+                }
+            },
+            "schemas": {
+                "TokenRequest": {
+                    "type": "object",
+                    "required": ["email", "password"],
+                    "properties": {
+                        "email": {"type": "string", "format": "email"},
+                        "password": {"type": "string", "format": "password"},
+                    },
+                },
+                "TokenResponse": {
+                    "type": "object",
+                    "properties": {
+                        "access_token": {"type": "string"},
+                        "token_type": {"type": "string", "example": "Bearer"},
+                        "expires_in": {"type": "integer"},
+                    },
+                },
+                "Debt": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "debt_type": {"type": "string"},
+                        "creditor": {"type": "string"},
+                        "outstanding_amount": {"type": "number", "format": "float"},
+                        "interest_rate": {"type": "number", "format": "float"},
+                        "emi": {"type": "number", "format": "float"},
+                        "minimum_due": {"type": "number", "format": "float"},
+                        "user_id": {"type": "integer"},
+                    },
+                },
+                "DebtPayload": {
+                    "type": "object",
+                    "required": [
+                        "debt_type",
+                        "creditor",
+                        "outstanding_amount",
+                        "interest_rate",
+                        "emi",
+                        "minimum_due",
+                    ],
+                    "properties": {
+                        "debt_type": {"type": "string"},
+                        "creditor": {"type": "string"},
+                        "outstanding_amount": {"type": "number", "format": "float"},
+                        "interest_rate": {"type": "number", "format": "float"},
+                        "emi": {"type": "number", "format": "float"},
+                        "minimum_due": {"type": "number", "format": "float"},
+                    },
+                },
+                "Income": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "source": {"type": "string"},
+                        "amount": {"type": "number", "format": "float"},
+                        "frequency": {"type": "string"},
+                        "monthly_amount": {"type": "number", "format": "float"},
+                    },
+                },
+                "IncomePayload": {
+                    "type": "object",
+                    "required": ["source", "amount"],
+                    "properties": {
+                        "source": {"type": "string"},
+                        "amount": {"type": "number", "format": "float"},
+                        "frequency": {
+                            "type": "string",
+                            "enum": list(FREQUENCY_FACTORS.keys()),
+                            "default": "monthly",
+                        },
+                    },
+                },
+                "Goal": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "name": {"type": "string"},
+                        "target_amount": {"type": "number", "format": "float"},
+                        "current_amount": {"type": "number", "format": "float"},
+                        "remaining_amount": {"type": "number", "format": "float"},
+                        "target_date": {"type": "string", "format": "date", "nullable": True},
+                        "months_remaining": {"type": "integer"},
+                        "recommended_monthly": {"type": "number", "format": "float"},
+                        "progress_percent": {"type": "number", "format": "float"},
+                    },
+                },
+                "GoalCreatePayload": {
+                    "type": "object",
+                    "required": ["name", "target_amount"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "target_amount": {"type": "number", "format": "float"},
+                        "current_amount": {
+                            "type": "number",
+                            "format": "float",
+                            "default": 0,
+                        },
+                        "target_date": {"type": "string", "format": "date"},
+                    },
+                },
+                "GoalUpdatePayload": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "target_amount": {"type": "number", "format": "float"},
+                        "current_amount": {"type": "number", "format": "float"},
+                        "target_date": {"type": "string", "format": "date"},
+                    },
+                },
+                "StrategySummary": {
+                    "type": "object",
+                    "properties": {
+                        "total_balance": {"type": "number", "format": "float"},
+                        "total_minimums": {"type": "number", "format": "float"},
+                        "projected_months": {"type": "integer"},
+                        "payoff_order": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "creditor": {"type": "string"},
+                                    "months": {"type": "number", "format": "float"},
+                                },
+                            },
+                        },
+                    },
+                },
+                "SummaryResponse": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "integer"},
+                        "generated_at": {"type": "string", "format": "date-time"},
+                        "user": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer"},
+                                "name": {"type": "string"},
+                                "email": {"type": "string", "format": "email"},
+                                "monthly_extra_payment": {"type": "number", "format": "float"},
+                            },
+                        },
+                        "debts": {"type": "array", "items": schema_ref("Debt")},
+                        "incomes": {"type": "array", "items": schema_ref("Income")},
+                        "goals": {"type": "array", "items": schema_ref("Goal")},
+                        "strategies": {
+                            "type": "object",
+                            "properties": {
+                                "snowball": schema_ref("StrategySummary"),
+                                "avalanche": schema_ref("StrategySummary"),
+                            },
+                        },
+                        "cash_flow": {
+                            "type": "object",
+                            "properties": {
+                                "total_income": {"type": "number", "format": "float"},
+                                "total_minimums": {"type": "number", "format": "float"},
+                                "net_after_minimums": {"type": "number", "format": "float"},
+                                "progress_percent": {"type": "number", "format": "float"},
+                            },
+                        },
+                        "insights": {
+                            "type": "object",
+                            "properties": {
+                                "recommended_emergency_fund": {"type": "number", "format": "float"},
+                                "emergency_gap": {"type": "number", "format": "float"},
+                                "goal_savings_total": {"type": "number", "format": "float"},
+                                "goal_count": {"type": "integer"},
+                            },
+                        },
+                    },
+                },
+                "ErrorResponse": {
+                    "type": "object",
+                    "properties": {"error": {"type": "string"}},
+                },
+                "StatusResponse": {
+                    "type": "object",
+                    "properties": {"status": {"type": "string", "example": "deleted"}},
+                },
+            },
+        },
+        "paths": {
+            "/api/v1/auth/token": {
+                "post": {
+                    "tags": ["Auth"],
+                    "summary": "Exchange credentials for a JWT",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {"schema": schema_ref("TokenRequest")}
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "JWT issued",
+                            "content": {
+                                "application/json": {"schema": schema_ref("TokenResponse")}
+                            },
+                        },
+                        "401": {
+                            "description": "Invalid credentials",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                    },
+                }
+            },
+            "/api/v1/summary": {
+                "get": {
+                    "tags": ["Snapshots"],
+                    "summary": "Fetch the holistic financial snapshot",
+                    "security": [{"bearerAuth": []}],
+                    "responses": {
+                        "200": {
+                            "description": "Snapshot payload",
+                            "content": {
+                                "application/json": {"schema": schema_ref("SummaryResponse")}
+                            },
+                        },
+                        "401": {
+                            "description": "Missing or invalid token",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                    },
+                }
+            },
+            "/api/v1/strategies": {
+                "get": {
+                    "tags": ["Snapshots"],
+                    "summary": "Compare snowball vs avalanche payoff timelines",
+                    "security": [{"bearerAuth": []}],
+                    "responses": {
+                        "200": {
+                            "description": "Strategy comparison",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "strategies": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "snowball": schema_ref("StrategySummary"),
+                                                    "avalanche": schema_ref("StrategySummary"),
+                                                },
+                                            },
+                                            "api_version": {"type": "integer"},
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+            "/api/v1/debts": {
+                "get": {
+                    "tags": ["Debts"],
+                    "summary": "List debts for the authenticated user",
+                    "security": [{"bearerAuth": []}],
+                    "responses": {
+                        "200": {
+                            "description": "User debts",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "debts": {
+                                                "type": "array",
+                                                "items": schema_ref("Debt"),
+                                            }
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                },
+                "post": {
+                    "tags": ["Debts"],
+                    "summary": "Capture a new debt",
+                    "security": [{"bearerAuth": []}],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {"schema": schema_ref("DebtPayload")}
+                        },
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Debt stored",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"debt": schema_ref("Debt")},
+                                    }
+                                }
+                            },
+                        },
+                        "400": {
+                            "description": "Validation error",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                    },
+                },
+            },
+            "/api/v1/debts/{debt_id}": {
+                "delete": {
+                    "tags": ["Debts"],
+                    "summary": "Delete a debt",
+                    "security": [{"bearerAuth": []}],
+                    "parameters": [
+                        {
+                            "name": "debt_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"},
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Debt removed",
+                            "content": {
+                                "application/json": {"schema": schema_ref("StatusResponse")}
+                            },
+                        },
+                        "404": {
+                            "description": "Debt not found",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                    },
+                }
+            },
+            "/api/v1/incomes": {
+                "get": {
+                    "tags": ["Income"],
+                    "summary": "List incomes for the authenticated user",
+                    "security": [{"bearerAuth": []}],
+                    "responses": {
+                        "200": {
+                            "description": "Income streams",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "incomes": {
+                                                "type": "array",
+                                                "items": schema_ref("Income"),
+                                            }
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                },
+                "post": {
+                    "tags": ["Income"],
+                    "summary": "Add a new income stream",
+                    "security": [{"bearerAuth": []}],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {"schema": schema_ref("IncomePayload")}
+                        },
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Income saved",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"income": schema_ref("Income")},
+                                    }
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+            "/api/v1/incomes/{income_id}": {
+                "delete": {
+                    "tags": ["Income"],
+                    "summary": "Delete an income stream",
+                    "security": [{"bearerAuth": []}],
+                    "parameters": [
+                        {
+                            "name": "income_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"},
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Income removed",
+                            "content": {
+                                "application/json": {"schema": schema_ref("StatusResponse")}
+                            },
+                        },
+                        "404": {
+                            "description": "Income not found",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                    },
+                }
+            },
+            "/api/v1/goals": {
+                "get": {
+                    "tags": ["Goals"],
+                    "summary": "List savings goals",
+                    "security": [{"bearerAuth": []}],
+                    "responses": {
+                        "200": {
+                            "description": "Goal list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "goals": {
+                                                "type": "array",
+                                                "items": schema_ref("Goal"),
+                                            }
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                },
+                "post": {
+                    "tags": ["Goals"],
+                    "summary": "Create a savings goal",
+                    "security": [{"bearerAuth": []}],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {"schema": schema_ref("GoalCreatePayload")}
+                        },
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Goal saved",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"goal": schema_ref("Goal")},
+                                    }
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+            "/api/v1/goals/{goal_id}": {
+                "patch": {
+                    "tags": ["Goals"],
+                    "summary": "Update a savings goal",
+                    "security": [{"bearerAuth": []}],
+                    "parameters": [
+                        {
+                            "name": "goal_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"},
+                        }
+                    ],
+                    "requestBody": {
+                        "required": False,
+                        "content": {
+                            "application/json": {"schema": schema_ref("GoalUpdatePayload")}
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Goal updated",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"goal": schema_ref("Goal")},
+                                    }
+                                }
+                            },
+                        },
+                        "404": {
+                            "description": "Goal not found",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                    },
+                },
+                "delete": {
+                    "tags": ["Goals"],
+                    "summary": "Delete a savings goal",
+                    "security": [{"bearerAuth": []}],
+                    "parameters": [
+                        {
+                            "name": "goal_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"},
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Goal removed",
+                            "content": {
+                                "application/json": {"schema": schema_ref("StatusResponse")}
+                            },
+                        },
+                        "404": {
+                            "description": "Goal not found",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
+@app.route("/api/docs.json")
+def api_docs_spec():
+    return jsonify(build_openapi_spec())
+
+
+@app.route("/api/docs")
+def api_docs_page():
+    return render_template("swagger.html", spec_url=url_for("api_docs_spec"))
 
 
 @app.route("/incomes", methods=["POST"])

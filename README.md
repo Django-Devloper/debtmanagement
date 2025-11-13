@@ -16,6 +16,7 @@ A minimal full-stack implementation of the snowball debt payoff concept. The pro
 - Multi-step capture experience for adding debts on mobile.
 - Profile page to update your name, email, and monthly extra snowball contribution.
 - Omni-channel JSON API protected by JWT bearer tokens for debts, incomes, savings goals, payoff strategies, and aggregated summaries to power other clients.
+- Built-in Swagger UI at `/api/docs` so you can explore, test, and share the authenticated API contract without extra tooling.
 
 ## API surface
 
@@ -34,6 +35,13 @@ Every endpoint requires a valid JWT bearer token. Obtain a token by POSTing vali
 | `/api/v1/goals/<id>` | PATCH/DELETE | Update goal details/progress or delete the goal. |
 
 The legacy `/api/debts` endpoint now returns the same snapshot as `/api/v1/summary` for backward compatibility and is also JWT-protected.
+
+### Interactive docs
+
+- **Swagger UI:** `http://127.0.0.1:5000/api/docs`
+- **Raw OpenAPI JSON:** `http://127.0.0.1:5000/api/docs.json`
+
+Sign in to the web app, grab a token via `/api/v1/auth/token`, then use the "Authorize" button in Swagger UI to try every endpoint with your user-scoped data.
 
 ### Authentication & headers
 
@@ -101,23 +109,51 @@ All JSON bodies follow snake_case fields:
 
 ```jsonc
 {
-  "user": {"id": 7, "name": "Avery", "email": "avery@example.com", "extra_payment": 200.0},
+  "api_version": 1,
+  "generated_at": "2024-05-01T14:33:17.234Z",
+  "user": {
+    "id": 7,
+    "name": "Avery",
+    "email": "avery@example.com",
+    "monthly_extra_payment": 200.0
+  },
   "cash_flow": {
     "total_income": 7800.0,
-    "minimum_obligations": 1830.0,
-    "discretionary_after_minimums": 5970.0
+    "total_minimums": 1830.0,
+    "net_after_minimums": 5970.0,
+    "progress_percent": 25.0
   },
   "debts": [/* same objects returned by GET /api/v1/debts */],
   "incomes": [/* same objects returned by GET /api/v1/incomes */],
   "goals": [/* same objects returned by GET /api/v1/goals */],
   "strategies": {
-    "snowball": {"projected_months": 27, "payoff_order": [3, 2, 5, 1]},
-    "avalanche": {"projected_months": 24, "payoff_order": [2, 5, 3, 1]}
+    "snowball": {
+      "total_balance": 12800.0,
+      "projected_months": 27,
+      "payoff_order": [
+        {"creditor": "Amex Blue", "months": 6},
+        {"creditor": "Student Loan", "months": 21}
+      ]
+    },
+    "avalanche": {
+      "total_balance": 12800.0,
+      "projected_months": 24,
+      "payoff_order": [
+        {"creditor": "Student Loan", "months": 12},
+        {"creditor": "Amex Blue", "months": 12}
+      ]
+    }
+  },
+  "insights": {
+    "recommended_emergency_fund": 3900.0,
+    "emergency_gap": 1000.0,
+    "goal_savings_total": 2900.0,
+    "goal_count": 2
   }
 }
 ```
 
-Collection endpoints (`/debts`, `/incomes`, `/goals`) return arrays of objects with a consistent `id`, timestamps, and any computed helpers (e.g., `monthly_amount` on incomes or `recommended_monthly` on goals). Update/delete endpoints return `{ "status": "ok" }` on success.
+Collection endpoints (`/debts`, `/incomes`, `/goals`) return arrays of objects with consistent `id` values plus computed helpers (e.g., `monthly_amount` on incomes or `recommended_monthly` on goals). Update/delete endpoints return `{ "status": "ok" }` on success.
 
 ## Getting Started
 

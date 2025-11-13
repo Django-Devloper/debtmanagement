@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    {% block extra_head %}{% endblock %}
   </head>
   <body>
     <header class="app-header">
@@ -42,5 +43,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+    {% block extra_scripts %}{% endblock %}
   </body>
 </html>
