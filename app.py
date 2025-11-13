@@ -68,9 +68,14 @@ def calculate_snowball(debts: List[Debt], extra_payment: float = 0) -> SnowballS
     return SnowballSummary(total_balance, total_minimums, months, payoff_order)
 
 
-@app.before_first_request
 def setup_db():
-    db.create_all()
+    """Ensure database tables exist before handling requests."""
+    with app.app_context():
+        db.create_all()
+
+
+# Initialize the schema immediately so CLI/WSGI entry points behave the same.
+setup_db()
 
 
 @app.route("/")
