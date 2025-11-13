@@ -8,6 +8,7 @@ A minimal full-stack implementation of the snowball debt payoff concept. The pro
 - Add unlimited debts tied to the logged-in profile and view them in a sortable table.
 - Capture every income stream (salary, freelance, rental, etc.) and see the converted monthly cash flow alongside your minimum payments.
 - Automatic snowball strategy summary (balance, minimums, payoff order, and projected months) that honors each user's extra-payment preference.
+- Parallel avalanche strategy projection so every user can compare both payoff methods (snowball momentum vs. avalanche interest savings) and see how long each will take to reach debt freedom.
 - Focus card for the next debt to attack and a quick "Pay off" action.
 - Interactive debt payoff calculator for experimenting with balances, rates, and payments.
 - Multi-step capture experience for adding debts on mobile.

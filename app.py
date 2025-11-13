@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Tuple
+from typing import Callable, List, Tuple
 
 from flask import Flask, redirect, render_template, request, url_for, flash, jsonify
 from flask_login import (
@@ -115,33 +115,63 @@ class Income(db.Model):
 
 
 @dataclass
-class SnowballSummary:
+class PayoffSummary:
     total_balance: float
     total_minimums: float
     projected_months: int
     payoff_order: List[Tuple[str, float]]
 
 
-def calculate_snowball(debts: List[Debt], extra_payment: float = 0) -> SnowballSummary:
-    if not debts:
-        return SnowballSummary(0, 0, 0, [])
+def payoff_summary_payload(summary: PayoffSummary) -> dict:
+    return {
+        "total_balance": summary.total_balance,
+        "total_minimums": summary.total_minimums,
+        "projected_months": summary.projected_months,
+        "payoff_order": summary.payoff_order,
+    }
 
-    sorted_debts = sorted(debts, key=lambda d: d.outstanding_amount)
-    total_balance = sum(d.outstanding_amount for d in sorted_debts)
-    total_minimums = sum(d.minimum_due for d in sorted_debts)
+
+def _calculate_payoff(
+    debts: List[Debt],
+    *,
+    sort_key: Callable[[Debt], object],
+    reverse: bool = False,
+    extra_payment: float = 0,
+) -> PayoffSummary:
+    if not debts:
+        return PayoffSummary(0, 0, 0, [])
+
+    ordered_debts = sorted(debts, key=sort_key, reverse=reverse)
+    total_balance = sum(d.outstanding_amount for d in ordered_debts)
+    total_minimums = sum(d.minimum_due for d in ordered_debts)
 
     months = 0
-    payoff_order = []
+    payoff_order: List[Tuple[str, float]] = []
     snowball_payment = extra_payment
 
-    for debt in sorted_debts:
+    for debt in ordered_debts:
         payment = max(debt.minimum_due + snowball_payment, 1)
         months_for_debt = math.ceil(debt.outstanding_amount / payment)
         months += months_for_debt
         snowball_payment += debt.minimum_due
         payoff_order.append((debt.creditor, months_for_debt))
 
-    return SnowballSummary(total_balance, total_minimums, months, payoff_order)
+    return PayoffSummary(total_balance, total_minimums, months, payoff_order)
+
+
+def calculate_snowball(debts: List[Debt], extra_payment: float = 0) -> PayoffSummary:
+    return _calculate_payoff(
+        debts, sort_key=lambda d: d.outstanding_amount, extra_payment=extra_payment
+    )
+
+
+def calculate_avalanche(debts: List[Debt], extra_payment: float = 0) -> PayoffSummary:
+    return _calculate_payoff(
+        debts,
+        sort_key=lambda d: (d.interest_rate, d.outstanding_amount),
+        reverse=True,
+        extra_payment=extra_payment,
+    )
 
 
 def ensure_debt_user_column():
@@ -190,7 +220,12 @@ def dashboard():
         .order_by(Income.created_at.desc())
         .all()
     )
-    snowball = calculate_snowball(debts, extra_payment=current_user.monthly_extra_payment)
+    snowball = calculate_snowball(
+        debts, extra_payment=current_user.monthly_extra_payment
+    )
+    avalanche = calculate_avalanche(
+        debts, extra_payment=current_user.monthly_extra_payment
+    )
     top_debt = debts[0] if debts else None
     total_income = sum(income.monthly_amount for income in incomes)
     net_after_minimums = total_income - snowball.total_minimums
@@ -200,10 +235,16 @@ def dashboard():
     if snowball.projected_months > 0 and debt_count > 0:
         progress = (payoff_steps / debt_count) * 100
 
+    snowball_sequence = [creditor for creditor, _ in snowball.payoff_order]
+    avalanche_sequence = [creditor for creditor, _ in avalanche.payoff_order]
+
     return render_template(
         "dashboard.html",
         debts=debts,
         snowball=snowball,
+        avalanche=avalanche,
+        snowball_sequence=snowball_sequence,
+        avalanche_sequence=avalanche_sequence,
         top_debt=top_debt,
         incomes=incomes,
         total_income=total_income,
@@ -281,15 +322,19 @@ def api_debts():
         .order_by(Income.created_at.desc())
         .all()
     )
-    snowball = calculate_snowball(debts, extra_payment=current_user.monthly_extra_payment)
+    snowball = calculate_snowball(
+        debts, extra_payment=current_user.monthly_extra_payment
+    )
+    avalanche = calculate_avalanche(
+        debts, extra_payment=current_user.monthly_extra_payment
+    )
     return jsonify(
         {
             "debts": [d.as_dict() for d in debts],
-            "summary": {
-                "total_balance": snowball.total_balance,
-                "total_minimums": snowball.total_minimums,
-                "projected_months": snowball.projected_months,
-                "payoff_order": snowball.payoff_order,
+            "summary": payoff_summary_payload(snowball),
+            "strategies": {
+                "snowball": payoff_summary_payload(snowball),
+                "avalanche": payoff_summary_payload(avalanche),
             },
             "user": {
                 "name": current_user.name,

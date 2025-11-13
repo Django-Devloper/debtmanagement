@@ -95,6 +95,29 @@
   </article>
 
   <article class="card">
+    <div class="card-header">
+      <div>
+        <h2>Avalanche Strategy</h2>
+        <p>Tackle the highest interest rates first to cut the total amount of interest paid.</p>
+        <p class="muted">Projection: {{ avalanche.projected_months }} month{{ 's' if avalanche.projected_months != 1 }} to become debt free.</p>
+      </div>
+    </div>
+
+    <ul class="payoff-list">
+      {% if avalanche.payoff_order %}
+        {% for creditor, months in avalanche.payoff_order %}
+          <li>
+            <span>{{ creditor }}</span>
+            <span>{{ months }} month{{ 's' if months != 1 }}</span>
+          </li>
+        {% endfor %}
+      {% else %}
+        <li class="empty-state">Add debts to compare the avalanche method.</li>
+      {% endif %}
+    </ul>
+  </article>
+
+  <article class="card">
     <h2>Debt payoff calculator</h2>
     <p>Experiment with extra payments and interest to see how quickly you could be debt-free.</p>
     <form class="calculator" id="payoff-calculator">
@@ -123,7 +146,28 @@
   <div class="progress">
     <div class="progress-bar" style="width: {{ progress }}%"></div>
   </div>
-  <p class="progress-copy">You're going to be debt free in {{ snowball.projected_months }} months.</p>
+  <p class="progress-copy">Snowball projects {{ snowball.projected_months }} month{{ 's' if snowball.projected_months != 1 }} to become debt free. Avalanche trims that to {{ avalanche.projected_months }} month{{ 's' if avalanche.projected_months != 1 }}.</p>
+
+  <div class="strategy-grid">
+    <div class="strategy-panel">
+      <p class="tag">Snowball focus order</p>
+      {% if snowball_sequence %}
+        <p class="headline">{{ snowball_sequence | join(' → ') }}</p>
+        <p class="muted">Chip away at the smallest balances first for quick wins.</p>
+      {% else %}
+        <p class="muted">Add debts to see the snowball order.</p>
+      {% endif %}
+    </div>
+    <div class="strategy-panel">
+      <p class="tag">Avalanche focus order</p>
+      {% if avalanche_sequence %}
+        <p class="headline">{{ avalanche_sequence | join(' → ') }}</p>
+        <p class="muted">Aggressively eliminate the highest APR balances to save on interest.</p>
+      {% else %}
+        <p class="muted">Add debts to unlock the avalanche plan.</p>
+      {% endif %}
+    </div>
+  </div>
 </section>
 
 <section class="card income-card">

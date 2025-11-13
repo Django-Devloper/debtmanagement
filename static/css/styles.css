@@ -305,6 +305,34 @@ body {
   padding: 0.75rem 1rem;
 }
 
+.tag {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0;
+}
+
+.strategy-grid {
+  margin-top: 1.25rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.strategy-panel {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem 1.25rem;
+  background: rgba(24, 50, 71, 0.02);
+}
+
+.strategy-panel .headline {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.35rem 0;
+}
+
 .income-card .income-totals {
   text-align: right;
 }
