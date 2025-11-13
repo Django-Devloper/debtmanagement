@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="card new-debt">
+  <a href="{{ url_for('dashboard') }}" class="back-link">← Back</a>
+  <h1>Active Debts</h1>
+  <p>List all your debts accurately. Use the stepper to capture each obligation.</p>
+
+  <div class="stepper" id="debt-stepper" data-step="1">
+    <div class="step-indicator">
+      <span id="step-number">1</span>
+    </div>
+    <form id="step-form">
+      <label>Debt Type
+        <select name="debt_type" required>
+          <option value="">Select</option>
+          <option>Credit Card</option>
+          <option>Personal Loan</option>
+          <option>Auto Loan</option>
+          <option>Other</option>
+        </select>
+      </label>
+      <label>Creditor
+        <input type="text" name="creditor" required>
+      </label>
+      <label>Outstanding Amount (₹)
+        <input type="number" name="outstanding_amount" min="0" step="0.01" required>
+      </label>
+      <label>Interest %
+        <input type="number" name="interest_rate" min="0" step="0.01" required>
+      </label>
+      <label>EMI (₹)
+        <input type="number" name="emi" min="0" step="0.01" required>
+      </label>
+      <label>Minimum Due (₹)
+        <input type="number" name="minimum_due" min="0" step="0.01" required>
+      </label>
+      <div class="step-actions">
+        <button type="button" class="ghost" id="save-quit">Save and Quit Adding</button>
+        <button type="submit" class="primary" id="add-next">Add next debt</button>
+      </div>
+    </form>
+  </div>
+
+  <section class="card" id="step-summary">
+    <h2>Debts queued</h2>
+    <ul></ul>
+  </section>
+</section>
+{% endblock %}

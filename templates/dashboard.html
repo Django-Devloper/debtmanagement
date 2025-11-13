@@ -1,0 +1,365 @@
+{% extends 'base.html' %}
+
+{% block extra_head %}
+  {{ super() }}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+{% endblock %}
+
+{% block content %}
+<section class="card">
+  <div class="card-header">
+    <div>
+      <h1>{{ current_user.name.split(' ')[0] }}'s active debts</h1>
+      <p>Track every outstanding balance and see how the snowball accelerates your payoff journey.</p>
+    </div>
+    <form action="{{ url_for('add_debt') }}" method="post" class="inline-form">
+      <input type="text" name="debt_type" placeholder="Type" required>
+      <input type="text" name="creditor" placeholder="Creditor" required>
+      <input type="number" name="outstanding_amount" placeholder="Outstanding" min="0" step="0.01" required>
+      <input type="number" name="interest_rate" placeholder="Interest %" min="0" step="0.01" required>
+      <input type="number" name="emi" placeholder="EMI" min="0" step="0.01" required>
+      <input type="number" name="minimum_due" placeholder="Minimum" min="0" step="0.01" required>
+      <button type="submit" class="primary">Add</button>
+    </form>
+  </div>
+
+  <table class="debt-table">
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Creditor</th>
+        <th>Outstanding</th>
+        <th>Paid</th>
+        <th>Interest</th>
+        <th>EMI</th>
+        <th>Minimum</th>
+        <th>Payment</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if debts %}
+        {% for debt in debts %}
+        <tr>
+          <td>{{ debt.debt_type }}</td>
+          <td>{{ debt.creditor }}</td>
+          <td>₹{{ '%.2f'|format(debt.outstanding_amount) }}</td>
+          <td>₹{{ '%.2f'|format(debt.paid_amount) }}</td>
+          <td>{{ '%.2f'|format(debt.interest_rate) }}%</td>
+          <td>₹{{ '%.2f'|format(debt.emi) }}</td>
+          <td>₹{{ '%.2f'|format(debt.minimum_due) }}</td>
+          <td>
+            <form action="{{ url_for('pay_down_debt', debt_id=debt.id) }}" method="post" class="inline-payment">
+              <input type="number" name="amount" placeholder="₹" min="0" max="{{ '%.2f'|format(debt.outstanding_amount) }}" step="0.01" {% if debt.outstanding_amount <= 0 %}disabled{% endif %}>
+              <button type="submit" class="ghost" {% if debt.outstanding_amount <= 0 %}disabled{% endif %}>Apply</button>
+            </form>
+            <p class="tiny muted">Remaining ₹{{ '%.2f'|format(debt.outstanding_amount) }}</p>
+          </td>
+          <td>
+            <form action="{{ url_for('delete_debt', debt_id=debt.id) }}" method="post">
+              <button class="ghost">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="7" class="empty-state">Start by adding your debts above.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+{% if debts %}
+<section class="card">
+  <h2>Debt payoff progress by account</h2>
+  <p class="muted">Each donut shows how much you've already paid compared to what remains on that balance.</p>
+  <div class="debt-chart-grid">
+    {% for debt in debts %}
+      <article class="debt-chart-card {% if debt.outstanding_amount == 0 %}is-paid{% endif %}">
+        <header>
+          <h3>{{ debt.creditor }}</h3>
+          <p>{{ debt.debt_type }}</p>
+        </header>
+        <p class="tiny muted">Paid ₹{{ '%.2f'|format(debt.paid_amount) }} / Remaining ₹{{ '%.2f'|format(debt.outstanding_amount) }}</p>
+        <canvas id="debt-chart-{{ debt.id }}" data-debt-chart data-label="{{ debt.creditor }}" data-paid="{{ '%.2f'|format(debt.paid_amount) }}" data-remaining="{{ '%.2f'|format(debt.outstanding_amount) }}" width="160" height="160"></canvas>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="grid">
+  <article class="card">
+    <div class="card-header">
+      <div>
+        <h2>Snowball Strategy in Progress</h2>
+        <p>Focus on one debt at a time while paying minimums on the rest.</p>
+        <p class="muted">Extra payment budget: ₹{{ '%.0f'|format(current_user.monthly_extra_payment) }} / month</p>
+      </div>
+      <form action="{{ url_for('payoff_top_debt') }}" method="post">
+        <button class="primary">Pay off</button>
+      </form>
+    </div>
+
+    {% if top_debt %}
+      <div class="focus-card">
+        <p class="tag">Next up</p>
+        <h3>{{ top_debt.creditor }} <span>{{ top_debt.debt_type }}</span></h3>
+        <dl>
+          <div><dt>Balance</dt><dd>₹{{ '%.2f'|format(top_debt.outstanding_amount) }}</dd></div>
+          <div><dt>Interest</dt><dd>{{ '%.2f'|format(top_debt.interest_rate) }}%</dd></div>
+          <div><dt>Minimum Due</dt><dd>₹{{ '%.2f'|format(top_debt.minimum_due) }}</dd></div>
+          <div><dt>EMI</dt><dd>₹{{ '%.2f'|format(top_debt.emi) }}</dd></div>
+        </dl>
+      </div>
+    {% else %}
+      <p class="empty-state">Add debts to see your snowball strategy.</p>
+    {% endif %}
+
+    <ul class="payoff-list">
+      {% for creditor, months in snowball.payoff_order %}
+        <li>
+          <span>{{ creditor }}</span>
+          <span>{{ months }} month{{ 's' if months != 1 }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <article class="card">
+    <div class="card-header">
+      <div>
+        <h2>Avalanche Strategy</h2>
+        <p>Tackle the highest interest rates first to cut the total amount of interest paid.</p>
+        <p class="muted">Projection: {{ avalanche.projected_months }} month{{ 's' if avalanche.projected_months != 1 }} to become debt free.</p>
+      </div>
+    </div>
+
+    <ul class="payoff-list">
+      {% if avalanche.payoff_order %}
+        {% for creditor, months in avalanche.payoff_order %}
+          <li>
+            <span>{{ creditor }}</span>
+            <span>{{ months }} month{{ 's' if months != 1 }}</span>
+          </li>
+        {% endfor %}
+      {% else %}
+        <li class="empty-state">Add debts to compare the avalanche method.</li>
+      {% endif %}
+    </ul>
+  </article>
+
+  <article class="card">
+    <h2>Debt payoff calculator</h2>
+    <p>Experiment with extra payments and interest to see how quickly you could be debt-free.</p>
+    <form class="calculator" id="payoff-calculator">
+      <label>
+        Total Balance
+        <input type="number" name="balance" placeholder="250000" min="0" step="100">
+      </label>
+      <label>
+        Interest %
+        <input type="number" name="rate" placeholder="12" min="0" step="0.01">
+      </label>
+      <label>
+        Monthly payment
+        <input type="number" name="payment" placeholder="15000" min="0" step="100">
+      </label>
+      <button type="submit" class="primary full">Calculate</button>
+    </form>
+    <p class="calculator-result" id="payoff-result">Enter values above to see the projection.</p>
+  </article>
+</section>
+
+<section class="card">
+  <h2>Payoff Progress</h2>
+  <p>Total outstanding: ₹{{ '%.2f'|format(snowball.total_balance) }} | Minimums: ₹{{ '%.2f'|format(snowball.total_minimums) }}</p>
+  <p class="muted">Personalized for {{ current_user.name }} — tweak your extra payment from the profile page to see updated projections.</p>
+  <div class="progress">
+    <div class="progress-bar" style="width: {{ progress }}%"></div>
+  </div>
+  <p class="progress-copy">Snowball projects {{ snowball.projected_months }} month{{ 's' if snowball.projected_months != 1 }} to become debt free. Avalanche trims that to {{ avalanche.projected_months }} month{{ 's' if avalanche.projected_months != 1 }}.</p>
+
+  <div class="strategy-grid">
+    <div class="strategy-panel">
+      <p class="tag">Snowball focus order</p>
+      {% if snowball_sequence %}
+        <p class="headline">{{ snowball_sequence | join(' → ') }}</p>
+        <p class="muted">Chip away at the smallest balances first for quick wins.</p>
+      {% else %}
+        <p class="muted">Add debts to see the snowball order.</p>
+      {% endif %}
+    </div>
+    <div class="strategy-panel">
+      <p class="tag">Avalanche focus order</p>
+      {% if avalanche_sequence %}
+        <p class="headline">{{ avalanche_sequence | join(' → ') }}</p>
+        <p class="muted">Aggressively eliminate the highest APR balances to save on interest.</p>
+      {% else %}
+        <p class="muted">Add debts to unlock the avalanche plan.</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card chart-card">
+  <div class="card-header">
+    <div>
+      <h2>Strategy charts</h2>
+      <p>Visualize both payoff methods and compare how quickly they get you to zero.</p>
+    </div>
+  </div>
+  <div class="charts-grid">
+    <div class="chart-panel">
+      <h3>Balance timeline</h3>
+      <canvas id="timeline-chart" height="260"></canvas>
+    </div>
+    <div class="chart-panel">
+      <h3>Months to debt-free</h3>
+      <canvas id="strategy-bars" height="260"></canvas>
+    </div>
+  </div>
+</section>
+
+<section class="card income-card">
+  <div class="card-header">
+    <div>
+      <h2>Monthly income capture</h2>
+      <p>Log every income stream — salary, side gigs, consulting, rentals — we convert it into a monthly view automatically.</p>
+    </div>
+    <div class="income-totals">
+      <p class="muted">Total monthly earnings</p>
+      <p class="highlight">₹{{ '%.2f'|format(total_income) }}</p>
+      <p class="muted">After minimum debt payments: ₹{{ '%.2f'|format(net_after_minimums) }}</p>
+    </div>
+  </div>
+
+  <form action="{{ url_for('add_income') }}" method="post" class="inline-form income-form">
+    <input type="text" name="source" placeholder="Source (e.g. Salary, Freelance)" required>
+    <input type="number" name="amount" placeholder="Amount" min="0" step="0.01" required>
+    <select name="frequency">
+      <option value="monthly">Monthly</option>
+      <option value="biweekly">Bi-weekly</option>
+      <option value="weekly">Weekly</option>
+      <option value="daily">Daily</option>
+      <option value="quarterly">Quarterly</option>
+      <option value="yearly">Yearly</option>
+    </select>
+    <button type="submit" class="primary">Add income</button>
+  </form>
+
+  <table class="debt-table income-table">
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Base amount</th>
+        <th>Frequency</th>
+        <th>Monthly equivalent</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if incomes %}
+        {% for income in incomes %}
+        <tr>
+          <td>{{ income.source }}</td>
+          <td>₹{{ '%.2f'|format(income.amount) }}</td>
+          <td class="muted">{{ income.frequency|capitalize }}</td>
+          <td>₹{{ '%.2f'|format(income.monthly_amount) }}</td>
+          <td>
+            <form action="{{ url_for('delete_income', income_id=income.id) }}" method="post">
+              <button class="ghost">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="5" class="empty-state">Document your income sources to understand cash flow.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card goal-card">
+  <div class="card-header">
+    <div>
+      <h2>Financial planning goals</h2>
+      <p>Track emergency funds, travel plans, and other priorities alongside your debt payoff progress.</p>
+    </div>
+    <div class="goal-insights">
+      <p class="muted">Emergency fund target (3× minimums)</p>
+      <p class="highlight">₹{{ '%.2f'|format(emergency_target) }}</p>
+      <p class="muted">Currently allocated: ₹{{ '%.2f'|format(goal_savings_total) }}</p>
+      {% if emergency_gap > 0 %}
+        <p class="gap">Add ₹{{ '%.2f'|format(emergency_gap) }} to hit the recommendation.</p>
+      {% else %}
+        <p class="success">Goal met — keep building wealth!</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <form action="{{ url_for('add_goal') }}" method="post" class="inline-form goal-form">
+    <input type="text" name="name" placeholder="Goal name (e.g. Emergency fund)" required>
+    <input type="number" name="target_amount" placeholder="Target amount" min="0" step="0.01" required>
+    <input type="number" name="current_amount" placeholder="Current saved" min="0" step="0.01">
+    <label class="date-label">
+      Target date
+      <input type="date" name="target_date">
+    </label>
+    <button type="submit" class="primary">Save goal</button>
+  </form>
+
+  <table class="debt-table goal-table">
+    <thead>
+      <tr>
+        <th>Goal</th>
+        <th>Target</th>
+        <th>Saved</th>
+        <th>Remaining</th>
+        <th>Plan</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if goals %}
+        {% for goal in goals %}
+        <tr>
+          <td>
+            <div class="goal-title">{{ goal.name }}</div>
+            <div class="goal-progress">
+              <div class="goal-progress-bar" style="width: {{ '%.0f'|format(goal.progress_percent) }}%"></div>
+            </div>
+          </td>
+          <td>₹{{ '%.2f'|format(goal.target_amount) }}</td>
+          <td>₹{{ '%.2f'|format(goal.current_amount) }}</td>
+          <td>₹{{ '%.2f'|format(goal.remaining_amount) }}</td>
+          <td>
+            {% if goal.target_date %}
+              <p class="muted">Target {{ goal.target_date.strftime('%d %b %Y') }}</p>
+            {% else %}
+              <p class="muted">Flexible timeline</p>
+            {% endif %}
+            <p class="highlight">₹{{ '%.2f'|format(goal.recommended_monthly) }} / month</p>
+          </td>
+          <td>
+            <form action="{{ url_for('delete_goal', goal_id=goal.id) }}" method="post">
+              <button class="ghost">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="6" class="empty-state">Start a savings goal to plan for emergencies and future projects.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<div id="chart-data" data-chart='{{ chart_bootstrap | tojson }}' hidden></div>
+{% endblock %}
