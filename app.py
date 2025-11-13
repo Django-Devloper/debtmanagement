@@ -141,6 +141,7 @@ class Debt(db.Model):
     minimum_due = db.Column(db.Float, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    paid_amount = db.Column(db.Float, nullable=False, default=0.0)
 
     user = db.relationship("User", back_populates="debts")
 
@@ -154,6 +155,7 @@ class Debt(db.Model):
             "emi": self.emi,
             "minimum_due": self.minimum_due,
             "user_id": self.user_id,
+            "paid_amount": self.paid_amount,
         }
 
 
@@ -244,6 +246,7 @@ class PayoffSummary:
     total_minimums: float
     projected_months: int
     payoff_order: List[Tuple[str, float]]
+    balance_timeline: List[Dict[str, float]]
 
 
 def payoff_summary_payload(summary: PayoffSummary) -> dict:
@@ -255,6 +258,7 @@ def payoff_summary_payload(summary: PayoffSummary) -> dict:
             {"creditor": creditor, "months": months}
             for creditor, months in summary.payoff_order
         ],
+        "balance_timeline": summary.balance_timeline,
     }
 
 
@@ -266,7 +270,7 @@ def _calculate_payoff(
     extra_payment: float = 0,
 ) -> PayoffSummary:
     if not debts:
-        return PayoffSummary(0, 0, 0, [])
+        return PayoffSummary(0, 0, 0, [], [{"month": 0, "balance": 0.0}])
 
     ordered_debts = sorted(debts, key=sort_key, reverse=reverse)
     total_balance = sum(d.outstanding_amount for d in ordered_debts)
@@ -275,6 +279,10 @@ def _calculate_payoff(
     months = 0
     payoff_order: List[Tuple[str, float]] = []
     snowball_payment = extra_payment
+    remaining_balance = total_balance
+    timeline: List[Dict[str, float]] = [
+        {"month": 0, "balance": round(total_balance, 2)}
+    ]
 
     for debt in ordered_debts:
         payment = max(debt.minimum_due + snowball_payment, 1)
@@ -282,8 +290,12 @@ def _calculate_payoff(
         months += months_for_debt
         snowball_payment += debt.minimum_due
         payoff_order.append((debt.creditor, months_for_debt))
+        remaining_balance = max(remaining_balance - debt.outstanding_amount, 0.0)
+        timeline.append(
+            {"month": months, "balance": round(remaining_balance, 2)}
+        )
 
-    return PayoffSummary(total_balance, total_minimums, months, payoff_order)
+    return PayoffSummary(total_balance, total_minimums, months, payoff_order, timeline)
 
 
 def calculate_snowball(debts: List[Debt], extra_payment: float = 0) -> PayoffSummary:
@@ -318,6 +330,23 @@ def ensure_debt_user_column():
         )
 
 
+def ensure_debt_paid_column():
+    """Add the paid_amount tracker for partial payoff workflows."""
+
+    inspector = inspect(db.engine)
+    if "debts" not in inspector.get_table_names():
+        return
+
+    column_names = {column["name"] for column in inspector.get_columns("debts")}
+    if "paid_amount" in column_names:
+        return
+
+    with db.engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE debts ADD COLUMN paid_amount FLOAT NOT NULL DEFAULT 0")
+        )
+
+
 def months_between(start: date, end: date) -> int:
     """Rough month delta between two dates."""
 
@@ -329,6 +358,7 @@ def setup_db():
     with app.app_context():
         db.create_all()
         ensure_debt_user_column()
+        ensure_debt_paid_column()
 
 
 # Initialize the schema immediately so CLI/WSGI entry points behave the same.
@@ -378,6 +408,26 @@ def dashboard():
     emergency_target = round(snowball.total_minimums * 3, 2)
     goal_savings_total = sum(goal.current_amount for goal in goals)
     emergency_gap = max(emergency_target - goal_savings_total, 0)
+    debt_progress = [
+        {
+            "id": debt.id,
+            "label": debt.creditor,
+            "paid": round(debt.paid_amount, 2),
+            "remaining": round(max(debt.outstanding_amount, 0.0), 2),
+        }
+        for debt in debts
+    ]
+    chart_bootstrap = {
+        "timeline": {
+            "snowball": snowball.balance_timeline,
+            "avalanche": avalanche.balance_timeline,
+        },
+        "months": {
+            "snowball": snowball.projected_months,
+            "avalanche": avalanche.projected_months,
+        },
+        "debtProgress": debt_progress,
+    }
 
     return render_template(
         "dashboard.html",
@@ -395,6 +445,7 @@ def dashboard():
         emergency_target=emergency_target,
         emergency_gap=emergency_gap,
         goal_savings_total=goal_savings_total,
+        chart_bootstrap=chart_bootstrap,
     )
 
 
@@ -438,6 +489,29 @@ def delete_debt(debt_id):
     return redirect(url_for("dashboard"))
 
 
+@app.route("/debts/<int:debt_id>/payment", methods=["POST"])
+@login_required
+def pay_down_debt(debt_id):
+    debt = Debt.query.filter_by(id=debt_id, user_id=current_user.id).first_or_404()
+    if debt.outstanding_amount <= 0:
+        flash("This debt is already paid off.", "info")
+        return redirect(url_for("dashboard"))
+
+    try:
+        amount = request.form.get("amount", "0")
+        applied = _apply_partial_payment(debt, amount)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("dashboard"))
+
+    db.session.commit()
+    flash(
+        f"Applied ₹{applied:,.2f} toward {debt.creditor}. Remaining ₹{debt.outstanding_amount:,.2f}",
+        "success",
+    )
+    return redirect(url_for("dashboard"))
+
+
 @app.route("/debts/payoff", methods=["POST"])
 @login_required
 def payoff_top_debt():
@@ -447,9 +521,15 @@ def payoff_top_debt():
         .first()
     )
     if debt:
-        db.session.delete(debt)
-        db.session.commit()
-        flash(f"Paid off {debt.creditor}", "success")
+        if debt.outstanding_amount <= 0:
+            flash(f"{debt.creditor} is already cleared.", "info")
+        else:
+            applied = _apply_partial_payment(debt, debt.outstanding_amount)
+            db.session.commit()
+            flash(
+                f"Paid off {debt.creditor} with a ₹{applied:,.2f} payment.",
+                "success",
+            )
     else:
         flash("No debts to pay off", "info")
 
@@ -579,6 +659,28 @@ def api_v1_delete_debt(debt_id):
     db.session.delete(debt)
     db.session.commit()
     return jsonify({"status": "deleted"})
+
+
+@app.route("/api/v1/debts/<int:debt_id>/payment", methods=["POST"])
+@jwt_required
+def api_v1_pay_debt(debt_id):
+    debt = Debt.query.filter_by(id=debt_id, user_id=g.api_user.id).first()
+    if not debt:
+        return _json_error("Debt not found.", status=404)
+    if debt.outstanding_amount <= 0:
+        return _json_error("Debt already paid off.")
+
+    data = request.get_json(silent=True) or {}
+    if "amount" not in data:
+        return _json_error("amount is required.")
+
+    try:
+        applied = _apply_partial_payment(debt, data.get("amount"))
+    except ValueError as exc:
+        return _json_error(str(exc))
+
+    db.session.commit()
+    return jsonify({"debt": debt.as_dict(), "applied_amount": applied})
 
 
 @app.route("/api/v1/incomes", methods=["GET", "POST"])
@@ -724,6 +826,25 @@ def _json_error(message: str, status: int = 400):
     return jsonify({"error": message}), status
 
 
+def _apply_partial_payment(debt: Debt, amount: float) -> float:
+    """Reduce the outstanding balance and return the applied amount."""
+
+    try:
+        payment = round(float(amount), 2)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid payment amount")
+
+    if payment <= 0:
+        raise ValueError("Payment must be greater than zero")
+
+    applied = min(payment, max(debt.outstanding_amount, 0.0))
+    debt.outstanding_amount = round(max(debt.outstanding_amount - applied, 0.0), 2)
+    debt.paid_amount = round((debt.paid_amount or 0.0) + applied, 2)
+    if debt.outstanding_amount < 0.01:
+        debt.outstanding_amount = 0.0
+    return applied
+
+
 def build_financial_snapshot(user: User) -> Dict[str, object]:
     debts = (
         Debt.query.filter_by(user_id=user.id)
@@ -778,6 +899,21 @@ def build_financial_snapshot(user: User) -> Dict[str, object]:
             "emergency_gap": emergency_gap,
             "goal_savings_total": goal_savings_total,
             "goal_count": len(goals),
+        },
+        "charts": {
+            "timeline": {
+                "snowball": snowball.balance_timeline,
+                "avalanche": avalanche.balance_timeline,
+            },
+            "debt_progress": [
+                {
+                    "id": debt.id,
+                    "label": debt.creditor,
+                    "paid": round(debt.paid_amount, 2),
+                    "remaining": round(max(debt.outstanding_amount, 0.0), 2),
+                }
+                for debt in debts
+            ],
         },
     }
 
@@ -836,6 +972,7 @@ def build_openapi_spec() -> Dict[str, object]:
                         "emi": {"type": "number", "format": "float"},
                         "minimum_due": {"type": "number", "format": "float"},
                         "user_id": {"type": "integer"},
+                        "paid_amount": {"type": "number", "format": "float"},
                     },
                 },
                 "DebtPayload": {
@@ -915,6 +1052,13 @@ def build_openapi_spec() -> Dict[str, object]:
                         "target_amount": {"type": "number", "format": "float"},
                         "current_amount": {"type": "number", "format": "float"},
                         "target_date": {"type": "string", "format": "date"},
+                    },
+                },
+                "TimelinePoint": {
+                    "type": "object",
+                    "properties": {
+                        "month": {"type": "integer"},
+                        "balance": {"type": "number", "format": "float"},
                     },
                 },
                 "StrategySummary": {
@@ -1150,6 +1294,70 @@ def build_openapi_spec() -> Dict[str, object]:
                     },
                 }
             },
+            "/api/v1/debts/{debt_id}/payment": {
+                "post": {
+                    "tags": ["Debts"],
+                    "summary": "Apply a partial payment",
+                    "security": [{"bearerAuth": []}],
+                    "parameters": [
+                        {
+                            "name": "debt_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"},
+                        }
+                    ],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["amount"],
+                                    "properties": {
+                                        "amount": {
+                                            "type": "number",
+                                            "format": "float",
+                                            "description": "Amount to apply toward the balance.",
+                                        }
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Updated debt with new balances",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "applied_amount": {
+                                                "type": "number",
+                                                "format": "float",
+                                            },
+                                            "debt": schema_ref("Debt"),
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "400": {
+                            "description": "Validation error",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                        "404": {
+                            "description": "Debt not found",
+                            "content": {
+                                "application/json": {"schema": schema_ref("ErrorResponse")}
+                            },
+                        },
+                    },
+                }
+            },
             "/api/v1/incomes": {
                 "get": {
                     "tags": ["Income"],
@@ -1339,12 +1547,16 @@ def build_openapi_spec() -> Dict[str, object]:
                             "description": "Goal not found",
                             "content": {
                                 "application/json": {"schema": schema_ref("ErrorResponse")}
+                                    },
+                                },
                             },
+                        },
+                        "balance_timeline": {
+                            "type": "array",
+                            "items": schema_ref("TimelinePoint"),
                         },
                     },
                 },
-            },
-        },
     }
 
 

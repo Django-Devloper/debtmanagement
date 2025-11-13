@@ -70,4 +70,167 @@ document.addEventListener('DOMContentLoaded', () => {
       window.location.href = '/';
     });
   }
+
+  const chartDataNode = document.getElementById('chart-data');
+  let chartPayload = null;
+  if (chartDataNode) {
+    try {
+      chartPayload = JSON.parse(chartDataNode.dataset.chart || '{}');
+    } catch (err) {
+      console.warn('Unable to parse chart bootstrap data', err);
+    }
+  }
+
+  const ChartLib = window.Chart;
+  if (ChartLib && chartPayload) {
+    const snowSeries = (chartPayload.timeline && chartPayload.timeline.snowball) || [];
+    const avalancheSeries = (chartPayload.timeline && chartPayload.timeline.avalanche) || [];
+    const labels = Array.from(
+      new Set([
+        ...snowSeries.map((point) => point.month),
+        ...avalancheSeries.map((point) => point.month),
+      ])
+    ).sort((a, b) => a - b);
+
+    function seriesValues(series, axisLabels) {
+      if (!series.length) {
+        return axisLabels.map(() => 0);
+      }
+      let idx = 0;
+      let current = series[0].balance;
+      return axisLabels.map((label) => {
+        while (idx + 1 < series.length && series[idx + 1].month <= label) {
+          idx += 1;
+          current = series[idx].balance;
+        }
+        return current;
+      });
+    }
+
+    const timelineCanvas = document.getElementById('timeline-chart');
+    if (timelineCanvas && labels.length) {
+      new ChartLib(timelineCanvas.getContext('2d'), {
+    new ChartLib(timelineCanvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Snowball balance',
+            data: seriesValues(snowSeries, labels),
+            borderColor: '#0ea5e9',
+            backgroundColor: 'rgba(14, 165, 233, 0.15)',
+            tension: 0.35,
+            fill: true,
+          },
+          {
+            label: 'Avalanche balance',
+            data: seriesValues(avalancheSeries, labels),
+            borderColor: '#f97316',
+            backgroundColor: 'rgba(249, 115, 22, 0.15)',
+            tension: 0.35,
+            fill: true,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            position: 'bottom',
+          },
+        },
+        interaction: {
+          mode: 'index',
+          intersect: false,
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: (value) => `₹${Number(value).toLocaleString()}`,
+            },
+          },
+          x: {
+            title: {
+              display: true,
+              text: 'Months',
+            },
+          },
+        },
+      },
+    });
+    }
+
+    const barCanvas = document.getElementById('strategy-bars');
+    if (barCanvas && chartPayload.months) {
+      new ChartLib(barCanvas.getContext('2d'), {
+    new ChartLib(barCanvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: ['Snowball', 'Avalanche'],
+        datasets: [
+          {
+            label: 'Months to debt-free',
+            backgroundColor: ['#0ea5e9', '#f97316'],
+            data: [chartPayload.months.snowball || 0, chartPayload.months.avalanche || 0],
+            borderRadius: 12,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              stepSize: 6,
+            },
+          },
+        },
+      },
+    });
+    }
+
+    if (Array.isArray(chartPayload.debtProgress)) {
+      chartPayload.debtProgress.forEach((item) => {
+        const canvas = document.getElementById(`debt-chart-${item.id}`);
+        if (!canvas) return;
+        const paid = Number(item.paid) || 0;
+        const remaining = Number(item.remaining) || 0;
+        if (paid === 0 && remaining === 0) {
+          return;
+        }
+        new ChartLib(canvas.getContext('2d'), {
+          type: 'doughnut',
+          data: {
+            labels: ['Paid', 'Remaining'],
+            datasets: [
+              {
+                data: [paid, remaining],
+                backgroundColor: ['#22c55e', '#f97316'],
+                borderWidth: 0,
+              },
+            ],
+          },
+          options: {
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label(context) {
+                    return `${context.label}: ₹${Number(context.parsed).toLocaleString()}`;
+                  },
+                },
+              },
+            },
+            cutout: '65%',
+          },
+        });
+      });
+    }
+  }
 });

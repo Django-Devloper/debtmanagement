@@ -1,5 +1,10 @@
 {% extends 'base.html' %}
 
+{% block extra_head %}
+  {{ super() }}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+{% endblock %}
+
 {% block content %}
 <section class="card">
   <div class="card-header">
@@ -24,9 +29,11 @@
         <th>Type</th>
         <th>Creditor</th>
         <th>Outstanding</th>
+        <th>Paid</th>
         <th>Interest</th>
         <th>EMI</th>
         <th>Minimum</th>
+        <th>Payment</th>
         <th></th>
       </tr>
     </thead>
@@ -37,9 +44,17 @@
           <td>{{ debt.debt_type }}</td>
           <td>{{ debt.creditor }}</td>
           <td>₹{{ '%.2f'|format(debt.outstanding_amount) }}</td>
+          <td>₹{{ '%.2f'|format(debt.paid_amount) }}</td>
           <td>{{ '%.2f'|format(debt.interest_rate) }}%</td>
           <td>₹{{ '%.2f'|format(debt.emi) }}</td>
           <td>₹{{ '%.2f'|format(debt.minimum_due) }}</td>
+          <td>
+            <form action="{{ url_for('pay_down_debt', debt_id=debt.id) }}" method="post" class="inline-payment">
+              <input type="number" name="amount" placeholder="₹" min="0" max="{{ '%.2f'|format(debt.outstanding_amount) }}" step="0.01" {% if debt.outstanding_amount <= 0 %}disabled{% endif %}>
+              <button type="submit" class="ghost" {% if debt.outstanding_amount <= 0 %}disabled{% endif %}>Apply</button>
+            </form>
+            <p class="tiny muted">Remaining ₹{{ '%.2f'|format(debt.outstanding_amount) }}</p>
+          </td>
           <td>
             <form action="{{ url_for('delete_debt', debt_id=debt.id) }}" method="post">
               <button class="ghost">Remove</button>
@@ -55,6 +70,25 @@
     </tbody>
   </table>
 </section>
+
+{% if debts %}
+<section class="card">
+  <h2>Debt payoff progress by account</h2>
+  <p class="muted">Each donut shows how much you've already paid compared to what remains on that balance.</p>
+  <div class="debt-chart-grid">
+    {% for debt in debts %}
+      <article class="debt-chart-card {% if debt.outstanding_amount == 0 %}is-paid{% endif %}">
+        <header>
+          <h3>{{ debt.creditor }}</h3>
+          <p>{{ debt.debt_type }}</p>
+        </header>
+        <p class="tiny muted">Paid ₹{{ '%.2f'|format(debt.paid_amount) }} / Remaining ₹{{ '%.2f'|format(debt.outstanding_amount) }}</p>
+        <canvas id="debt-chart-{{ debt.id }}" data-debt-chart data-label="{{ debt.creditor }}" data-paid="{{ '%.2f'|format(debt.paid_amount) }}" data-remaining="{{ '%.2f'|format(debt.outstanding_amount) }}" width="160" height="160"></canvas>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
 
 <section class="grid">
   <article class="card">
@@ -166,6 +200,25 @@
       {% else %}
         <p class="muted">Add debts to unlock the avalanche plan.</p>
       {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card chart-card">
+  <div class="card-header">
+    <div>
+      <h2>Strategy charts</h2>
+      <p>Visualize both payoff methods and compare how quickly they get you to zero.</p>
+    </div>
+  </div>
+  <div class="charts-grid">
+    <div class="chart-panel">
+      <h3>Balance timeline</h3>
+      <canvas id="timeline-chart" height="260"></canvas>
+    </div>
+    <div class="chart-panel">
+      <h3>Months to debt-free</h3>
+      <canvas id="strategy-bars" height="260"></canvas>
     </div>
   </div>
 </section>
@@ -307,4 +360,6 @@
     </tbody>
   </table>
 </section>
+
+<div id="chart-data" data-chart='{{ chart_bootstrap | tojson }}' hidden></div>
 {% endblock %}

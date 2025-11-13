@@ -10,8 +10,10 @@ A minimal full-stack implementation of the snowball debt payoff concept. The pro
 - Create savings goals (emergency funds, vacations, tuition, etc.) with optional timelines and see recommended monthly contributions to stay on target.
 - Automatic snowball strategy summary (balance, minimums, payoff order, and projected months) that honors each user's extra-payment preference.
 - Parallel avalanche strategy projection so every user can compare both payoff methods (snowball momentum vs. avalanche interest savings) and see how long each will take to reach debt freedom.
+- Built-in Chart.js visualizations that compare snowball vs. avalanche timelines and highlight how many months each method needs to hit zero.
 - Emergency fund insights calculated from your minimum payments so you know how much cushion to keep while eliminating debt.
-- Focus card for the next debt to attack and a quick "Pay off" action.
+- Focus card for the next debt to attack, per-debt donut charts for paid vs. remaining amounts, and inline partial-payment forms.
+- Partial payoff workflow that tracks cumulative `paid_amount` per debt (from the UI or API) so you can log one-off extra payments without deleting the account.
 - Interactive debt payoff calculator for experimenting with balances, rates, and payments.
 - Multi-step capture experience for adding debts on mobile.
 - Profile page to update your name, email, and monthly extra snowball contribution.
@@ -29,6 +31,7 @@ Every endpoint requires a valid JWT bearer token. Obtain a token by POSTing vali
 | `/api/v1/strategies` | GET | Snowball and avalanche payoff projections only. |
 | `/api/v1/debts` | GET/POST | List debts or create a new debt (JSON body mirrors the dashboard form). |
 | `/api/v1/debts/<id>` | DELETE | Remove a debt. |
+| `/api/v1/debts/<id>/payment` | POST | Apply a partial payment to a single debt and receive the updated balances. |
 | `/api/v1/incomes` | GET/POST | List income streams or add a new one. |
 | `/api/v1/incomes/<id>` | DELETE | Remove an income entry. |
 | `/api/v1/goals` | GET/POST | List or create savings goals with optional `target_date`. |
@@ -87,6 +90,11 @@ All JSON bodies follow snake_case fields:
   "emi": 220.0
 }
 
+// POST /api/v1/debts/42/payment
+{
+  "amount": 500.0
+}
+
 // POST /api/v1/incomes
 {
   "source": "Full-time Salary",
@@ -123,24 +131,48 @@ All JSON bodies follow snake_case fields:
     "net_after_minimums": 5970.0,
     "progress_percent": 25.0
   },
-  "debts": [/* same objects returned by GET /api/v1/debts */],
+  "debts": [
+    {
+      "id": 12,
+      "debt_type": "credit_card",
+      "creditor": "Amex Blue",
+      "outstanding_amount": 5400.0,
+      "interest_rate": 19.99,
+      "emi": 220.0,
+      "minimum_due": 135.0,
+      "user_id": 7,
+      "paid_amount": 600.0
+    }
+  ],
   "incomes": [/* same objects returned by GET /api/v1/incomes */],
   "goals": [/* same objects returned by GET /api/v1/goals */],
   "strategies": {
     "snowball": {
       "total_balance": 12800.0,
+      "total_minimums": 520.0,
       "projected_months": 27,
       "payoff_order": [
         {"creditor": "Amex Blue", "months": 6},
         {"creditor": "Student Loan", "months": 21}
+      ],
+      "balance_timeline": [
+        {"month": 0, "balance": 12800.0},
+        {"month": 6, "balance": 7400.0},
+        {"month": 27, "balance": 0.0}
       ]
     },
     "avalanche": {
       "total_balance": 12800.0,
+      "total_minimums": 520.0,
       "projected_months": 24,
       "payoff_order": [
         {"creditor": "Student Loan", "months": 12},
         {"creditor": "Amex Blue", "months": 12}
+      ],
+      "balance_timeline": [
+        {"month": 0, "balance": 12800.0},
+        {"month": 12, "balance": 6400.0},
+        {"month": 24, "balance": 0.0}
       ]
     }
   },
@@ -149,6 +181,15 @@ All JSON bodies follow snake_case fields:
     "emergency_gap": 1000.0,
     "goal_savings_total": 2900.0,
     "goal_count": 2
+  },
+  "charts": {
+    "timeline": {
+      "snowball": [/* same as strategies.snowball.balance_timeline */],
+      "avalanche": [/* same as strategies.avalanche.balance_timeline */]
+    },
+    "debt_progress": [
+      {"id": 12, "label": "Amex Blue", "paid": 600.0, "remaining": 5400.0}
+    ]
   }
 }
 ```
@@ -173,6 +214,6 @@ Collection endpoints (`/debts`, `/incomes`, `/goals`) return arrays of objects w
 
 4. Manage your profile (name, email, and monthly extra payment) at `/profile` any time.
 
-> **Schema change note:** if you used an older build (before authentication) the app now auto-upgrades the `debts` table by adding the new `user_id` column on startup. Registering or logging in will automatically attach any legacy debts (those created prior to auth) to the account you signed into. Income tracking uses a brand-new table so the schema will be created automatically on first launch after pulling these changes. If you prefer to start fresh you can still delete `snowball.db` before launching the server.
+> **Schema change note:** the app automatically backfills the `user_id` and `paid_amount` columns on the `debts` table during startup so you can upgrade without manual migrations. Registering or logging in will automatically attach any legacy debts (those created prior to auth) to the account you signed into. Income tracking and savings goals rely on brand-new tables so the schema will be created automatically on first launch after pulling these changes. If you prefer to start fresh you can still delete `snowball.db` before launching the server.
 
 The SQLite database (`snowball.db`) is created automatically on first run.
