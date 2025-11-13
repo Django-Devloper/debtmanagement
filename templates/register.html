@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="card auth-card">
+  <h1>Create your Snowball account</h1>
+  <p>We will use this profile to keep debts and payoff plans in sync across devices.</p>
+  <form method="post" class="stacked-form">
+    <label>
+      Full name
+      <input type="text" name="name" placeholder="Riya Sharma" required>
+    </label>
+    <label>
+      Email
+      <input type="email" name="email" placeholder="you@email.com" required>
+    </label>
+    <label>
+      Password
+      <input type="password" name="password" placeholder="Create a password" required>
+    </label>
+    <button type="submit" class="primary full">Sign up</button>
+  </form>
+  <p class="muted">Already have an account? <a href="{{ url_for('login') }}">Login</a>.</p>
+</section>
+{% endblock %}
