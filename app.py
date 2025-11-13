@@ -194,6 +194,11 @@ def dashboard():
     top_debt = debts[0] if debts else None
     total_income = sum(income.monthly_amount for income in incomes)
     net_after_minimums = total_income - snowball.total_minimums
+    debt_count = len(debts)
+    payoff_steps = len(snowball.payoff_order)
+    progress = 0.0
+    if snowball.projected_months > 0 and debt_count > 0:
+        progress = (payoff_steps / debt_count) * 100
 
     return render_template(
         "dashboard.html",
@@ -203,6 +208,7 @@ def dashboard():
         incomes=incomes,
         total_income=total_income,
         net_after_minimums=net_after_minimums,
+        progress=progress,
     )
 
 

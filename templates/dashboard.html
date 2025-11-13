@@ -121,7 +121,6 @@
   <p>Total outstanding: ₹{{ '%.2f'|format(snowball.total_balance) }} | Minimums: ₹{{ '%.2f'|format(snowball.total_minimums) }}</p>
   <p class="muted">Personalized for {{ current_user.name }} — tweak your extra payment from the profile page to see updated projections.</p>
   <div class="progress">
-    {% set progress = 0 if snowball.projected_months == 0 else ((snowball.payoff_order|length) / max(debts|length, 1)) * 100 %}
     <div class="progress-bar" style="width: {{ progress }}%"></div>
   </div>
   <p class="progress-copy">You're going to be debt free in {{ snowball.projected_months }} months.</p>
