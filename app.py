@@ -4,7 +4,16 @@ from datetime import datetime
 from typing import List, Tuple
 
 from flask import Flask, redirect, render_template, request, url_for, flash, jsonify
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    current_user,
+    login_required,
+    login_user,
+    logout_user,
+)
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///snowball.db"
@@ -12,6 +21,28 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.secret_key = "snowball-secret"
 
 db = SQLAlchemy(app)
+
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
+
+
+class User(UserMixin, db.Model):
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(120), nullable=False, unique=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    monthly_extra_payment = db.Column(db.Float, nullable=False, default=100.0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    debts = db.relationship("Debt", back_populates="user", cascade="all, delete-orphan")
+
+    def set_password(self, password: str) -> None:
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password: str) -> bool:
+        return check_password_hash(self.password_hash, password)
 
 
 class Debt(db.Model):
@@ -24,7 +55,10 @@ class Debt(db.Model):
     interest_rate = db.Column(db.Float, nullable=False)
     emi = db.Column(db.Float, nullable=False)
     minimum_due = db.Column(db.Float, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship("User", back_populates="debts")
 
     def as_dict(self):
         return {
@@ -35,6 +69,7 @@ class Debt(db.Model):
             "interest_rate": self.interest_rate,
             "emi": self.emi,
             "minimum_due": self.minimum_due,
+            "user_id": self.user_id,
         }
 
 
@@ -78,10 +113,20 @@ def setup_db():
 setup_db()
 
 
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+
 @app.route("/")
+@login_required
 def dashboard():
-    debts = Debt.query.order_by(Debt.outstanding_amount.asc()).all()
-    snowball = calculate_snowball(debts, extra_payment=100)
+    debts = (
+        Debt.query.filter_by(user_id=current_user.id)
+        .order_by(Debt.outstanding_amount.asc())
+        .all()
+    )
+    snowball = calculate_snowball(debts, extra_payment=current_user.monthly_extra_payment)
     top_debt = debts[0] if debts else None
 
     return render_template(
@@ -93,6 +138,7 @@ def dashboard():
 
 
 @app.route("/debts", methods=["POST"])
+@login_required
 def add_debt():
     try:
         debt = Debt(
@@ -102,6 +148,7 @@ def add_debt():
             interest_rate=float(request.form.get("interest_rate", 0) or 0),
             emi=float(request.form.get("emi", 0) or 0),
             minimum_due=float(request.form.get("minimum_due", 0) or 0),
+            user_id=current_user.id,
         )
         db.session.add(debt)
         db.session.commit()
@@ -113,8 +160,9 @@ def add_debt():
 
 
 @app.route("/debts/<int:debt_id>/delete", methods=["POST"])
+@login_required
 def delete_debt(debt_id):
-    debt = Debt.query.get_or_404(debt_id)
+    debt = Debt.query.filter_by(id=debt_id, user_id=current_user.id).first_or_404()
     db.session.delete(debt)
     db.session.commit()
     flash("Debt removed", "success")
@@ -122,8 +170,13 @@ def delete_debt(debt_id):
 
 
 @app.route("/debts/payoff", methods=["POST"])
+@login_required
 def payoff_top_debt():
-    debt = Debt.query.order_by(Debt.outstanding_amount.asc()).first()
+    debt = (
+        Debt.query.filter_by(user_id=current_user.id)
+        .order_by(Debt.outstanding_amount.asc())
+        .first()
+    )
     if debt:
         db.session.delete(debt)
         db.session.commit()
@@ -135,14 +188,20 @@ def payoff_top_debt():
 
 
 @app.route("/debts/new")
+@login_required
 def new_debt():
     return render_template("new_debt.html")
 
 
 @app.route("/api/debts")
+@login_required
 def api_debts():
-    debts = Debt.query.order_by(Debt.outstanding_amount.asc()).all()
-    snowball = calculate_snowball(debts, extra_payment=100)
+    debts = (
+        Debt.query.filter_by(user_id=current_user.id)
+        .order_by(Debt.outstanding_amount.asc())
+        .all()
+    )
+    snowball = calculate_snowball(debts, extra_payment=current_user.monthly_extra_payment)
     return jsonify(
         {
             "debts": [d.as_dict() for d in debts],
@@ -152,8 +211,101 @@ def api_debts():
                 "projected_months": snowball.projected_months,
                 "payoff_order": snowball.payoff_order,
             },
+            "user": {
+                "name": current_user.name,
+                "email": current_user.email,
+                "monthly_extra_payment": current_user.monthly_extra_payment,
+            },
         }
     )
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+
+        if not name or not email or not password:
+            flash("All fields are required.", "error")
+        elif User.query.filter_by(email=email).first():
+            flash("Email already registered.", "error")
+        else:
+            user = User(name=name, email=email)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+            login_user(user)
+            flash("Welcome! Your account is ready.", "success")
+            return redirect(url_for("dashboard"))
+
+    return render_template("register.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        user = User.query.filter_by(email=email).first()
+
+        if user and user.check_password(password):
+            login_user(user)
+            flash("Logged in successfully.", "success")
+            next_url = request.args.get("next")
+            return redirect(next_url or url_for("dashboard"))
+
+        flash("Invalid email or password.", "error")
+
+    return render_template("login.html")
+
+
+@app.route("/logout", methods=["POST"])
+@login_required
+def logout():
+    logout_user()
+    flash("You have been logged out.", "info")
+    return redirect(url_for("login"))
+
+
+@app.route("/profile", methods=["GET", "POST"])
+@login_required
+def profile():
+    if request.method == "POST":
+        name = request.form.get("name", current_user.name).strip()
+        email = request.form.get("email", current_user.email).strip().lower()
+        extra_payment_raw = request.form.get(
+            "monthly_extra_payment", current_user.monthly_extra_payment
+        )
+
+        if not name or not email:
+            flash("Name and email cannot be empty.", "error")
+        else:
+            existing = User.query.filter(
+                User.email == email, User.id != current_user.id
+            ).first()
+            if existing:
+                flash("Email already in use.", "error")
+            else:
+                current_user.name = name
+                current_user.email = email
+                try:
+                    current_user.monthly_extra_payment = float(extra_payment_raw or 0)
+                except ValueError:
+                    flash("Monthly extra payment must be numeric.", "error")
+                else:
+                    db.session.commit()
+                    flash("Profile updated.", "success")
+                    return redirect(url_for("profile"))
+
+    return render_template("profile.html")
 
 
 if __name__ == "__main__":

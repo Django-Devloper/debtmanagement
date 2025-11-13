@@ -4,7 +4,7 @@
 <section class="card">
   <div class="card-header">
     <div>
-      <h1>Active Debts</h1>
+      <h1>{{ current_user.name.split(' ')[0] }}'s active debts</h1>
       <p>Track every outstanding balance and see how the snowball accelerates your payoff journey.</p>
     </div>
     <form action="{{ url_for('add_debt') }}" method="post" class="inline-form">
@@ -62,6 +62,7 @@
       <div>
         <h2>Snowball Strategy in Progress</h2>
         <p>Focus on one debt at a time while paying minimums on the rest.</p>
+        <p class="muted">Extra payment budget: ₹{{ '%.0f'|format(current_user.monthly_extra_payment) }} / month</p>
       </div>
       <form action="{{ url_for('payoff_top_debt') }}" method="post">
         <button class="primary">Pay off</button>
@@ -118,6 +119,7 @@
 <section class="card">
   <h2>Payoff Progress</h2>
   <p>Total outstanding: ₹{{ '%.2f'|format(snowball.total_balance) }} | Minimums: ₹{{ '%.2f'|format(snowball.total_minimums) }}</p>
+  <p class="muted">Personalized for {{ current_user.name }} — tweak your extra payment from the profile page to see updated projections.</p>
   <div class="progress">
     {% set progress = 0 if snowball.projected_months == 0 else (len(snowball.payoff_order) / max(len(debts), 1)) * 100 %}
     <div class="progress-bar" style="width: {{ progress }}%"></div>

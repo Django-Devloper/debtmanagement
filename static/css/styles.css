@@ -53,12 +53,31 @@ body {
   font-weight: 600;
 }
 
+.pill-button.secondary {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+
+.pill-button.ghost {
+  background: rgba(24, 50, 71, 0.1);
+  color: var(--text);
+}
+
 .icon-link {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 38px;
   height: 38px;
+}
+
+.logout-form {
+  margin: 0;
+}
+
+.logout-form button {
+  border: none;
 }
 
 .app-body {
@@ -127,6 +146,84 @@ body {
   padding: 0.5rem 1rem;
   border-radius: 999px;
   cursor: pointer;
+}
+
+.stacked-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.stacked-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.stacked-form input {
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  font-size: 1rem;
+}
+
+.auth-card {
+  max-width: 520px;
+  margin: 3rem auto;
+  text-align: left;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 2rem;
+}
+
+.profile-summary {
+  background: #f7fafc;
+  border-radius: 18px;
+  padding: 1.5rem;
+}
+
+.profile-summary ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.profile-summary li {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+}
+
+.profile-summary strong {
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+  }
+
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .debt-table {
