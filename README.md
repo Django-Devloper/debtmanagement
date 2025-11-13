@@ -6,6 +6,7 @@ A minimal full-stack implementation of the snowball debt payoff concept. The pro
 
 - Secure email/password authentication with personal dashboards per user.
 - Add unlimited debts tied to the logged-in profile and view them in a sortable table.
+- Capture every income stream (salary, freelance, rental, etc.) and see the converted monthly cash flow alongside your minimum payments.
 - Automatic snowball strategy summary (balance, minimums, payoff order, and projected months) that honors each user's extra-payment preference.
 - Focus card for the next debt to attack and a quick "Pay off" action.
 - Interactive debt payoff calculator for experimenting with balances, rates, and payments.
@@ -31,6 +32,6 @@ A minimal full-stack implementation of the snowball debt payoff concept. The pro
 
 4. Manage your profile (name, email, and monthly extra payment) at `/profile` any time.
 
-> **Schema change note:** if you used an older build (before authentication) the app now auto-upgrades the `debts` table by adding the new `user_id` column on startup. Registering or logging in will automatically attach any legacy debts (those created prior to auth) to the account you signed into. If you prefer to start fresh you can still delete `snowball.db` before launching the server.
+> **Schema change note:** if you used an older build (before authentication) the app now auto-upgrades the `debts` table by adding the new `user_id` column on startup. Registering or logging in will automatically attach any legacy debts (those created prior to auth) to the account you signed into. Income tracking uses a brand-new table so the schema will be created automatically on first launch after pulling these changes. If you prefer to start fresh you can still delete `snowball.db` before launching the server.
 
 The SQLite database (`snowball.db`) is created automatically on first run.

@@ -120,6 +120,15 @@ body {
   border-radius: 12px;
 }
 
+.inline-form select {
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .inline-form button {
   border: none;
   border-radius: 12px;
@@ -294,6 +303,25 @@ body {
   border: 1px dashed var(--border);
   border-radius: 12px;
   padding: 0.75rem 1rem;
+}
+
+.income-card .income-totals {
+  text-align: right;
+}
+
+.income-card .highlight {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 0.2rem 0;
+}
+
+.income-form {
+  margin-bottom: 1rem;
+}
+
+.income-table td:last-child,
+.income-table th:last-child {
+  text-align: right;
 }
 
 .calculator label {

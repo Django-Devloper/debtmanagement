@@ -27,6 +27,16 @@ login_manager = LoginManager(app)
 login_manager.login_view = "login"
 
 
+FREQUENCY_FACTORS = {
+    "monthly": 1.0,
+    "biweekly": 26 / 12,
+    "weekly": 52 / 12,
+    "daily": 30,
+    "yearly": 1 / 12,
+    "quarterly": 1 / 3,
+}
+
+
 class User(UserMixin, db.Model):
     __tablename__ = "users"
 
@@ -38,6 +48,9 @@ class User(UserMixin, db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     debts = db.relationship("Debt", back_populates="user", cascade="all, delete-orphan")
+    incomes = db.relationship(
+        "Income", back_populates="user", cascade="all, delete-orphan"
+    )
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
@@ -71,6 +84,33 @@ class Debt(db.Model):
             "emi": self.emi,
             "minimum_due": self.minimum_due,
             "user_id": self.user_id,
+        }
+
+
+class Income(db.Model):
+    __tablename__ = "income_streams"
+
+    id = db.Column(db.Integer, primary_key=True)
+    source = db.Column(db.String(120), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    frequency = db.Column(db.String(32), nullable=False, default="monthly")
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship("User", back_populates="incomes")
+
+    @property
+    def monthly_amount(self) -> float:
+        factor = FREQUENCY_FACTORS.get(self.frequency, 1.0)
+        return self.amount * factor
+
+    def as_dict(self):
+        return {
+            "id": self.id,
+            "source": self.source,
+            "amount": self.amount,
+            "frequency": self.frequency,
+            "monthly_amount": self.monthly_amount,
         }
 
 
@@ -145,14 +185,24 @@ def dashboard():
         .order_by(Debt.outstanding_amount.asc())
         .all()
     )
+    incomes = (
+        Income.query.filter_by(user_id=current_user.id)
+        .order_by(Income.created_at.desc())
+        .all()
+    )
     snowball = calculate_snowball(debts, extra_payment=current_user.monthly_extra_payment)
     top_debt = debts[0] if debts else None
+    total_income = sum(income.monthly_amount for income in incomes)
+    net_after_minimums = total_income - snowball.total_minimums
 
     return render_template(
         "dashboard.html",
         debts=debts,
         snowball=snowball,
         top_debt=top_debt,
+        incomes=incomes,
+        total_income=total_income,
+        net_after_minimums=net_after_minimums,
     )
 
 
@@ -220,6 +270,11 @@ def api_debts():
         .order_by(Debt.outstanding_amount.asc())
         .all()
     )
+    incomes = (
+        Income.query.filter_by(user_id=current_user.id)
+        .order_by(Income.created_at.desc())
+        .all()
+    )
     snowball = calculate_snowball(debts, extra_payment=current_user.monthly_extra_payment)
     return jsonify(
         {
@@ -235,8 +290,58 @@ def api_debts():
                 "email": current_user.email,
                 "monthly_extra_payment": current_user.monthly_extra_payment,
             },
+            "incomes": [income.as_dict() for income in incomes],
+            "total_income": sum(income.monthly_amount for income in incomes),
         }
     )
+
+
+def _validated_frequency(value: str) -> str:
+    value = (value or "monthly").lower()
+    return value if value in FREQUENCY_FACTORS else "monthly"
+
+
+@app.route("/incomes", methods=["POST"])
+@login_required
+def add_income():
+    source = request.form.get("source", "").strip()
+    amount_raw = request.form.get("amount", "0").strip()
+    frequency = _validated_frequency(request.form.get("frequency", "monthly"))
+
+    if not source:
+        flash("Income source is required.", "error")
+        return redirect(url_for("dashboard"))
+
+    try:
+        amount = float(amount_raw)
+    except ValueError:
+        flash("Income amount must be numeric.", "error")
+        return redirect(url_for("dashboard"))
+
+    if amount <= 0:
+        flash("Income amount must be greater than zero.", "error")
+        return redirect(url_for("dashboard"))
+
+    income = Income(
+        source=source,
+        amount=amount,
+        frequency=frequency,
+        user_id=current_user.id,
+    )
+    db.session.add(income)
+    db.session.commit()
+    flash("Income stream saved.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/incomes/<int:income_id>/delete", methods=["POST"])
+@login_required
+def delete_income(income_id):
+    income = Income.query.filter_by(id=income_id, user_id=current_user.id).first_or_404()
+    db.session.delete(income)
+    db.session.commit()
+    flash("Income removed.", "success")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/register", methods=["GET", "POST"])

@@ -121,9 +121,70 @@
   <p>Total outstanding: ₹{{ '%.2f'|format(snowball.total_balance) }} | Minimums: ₹{{ '%.2f'|format(snowball.total_minimums) }}</p>
   <p class="muted">Personalized for {{ current_user.name }} — tweak your extra payment from the profile page to see updated projections.</p>
   <div class="progress">
-    {% set progress = 0 if snowball.projected_months == 0 else (len(snowball.payoff_order) / max(len(debts), 1)) * 100 %}
+    {% set progress = 0 if snowball.projected_months == 0 else ((snowball.payoff_order|length) / max(debts|length, 1)) * 100 %}
     <div class="progress-bar" style="width: {{ progress }}%"></div>
   </div>
   <p class="progress-copy">You're going to be debt free in {{ snowball.projected_months }} months.</p>
+</section>
+
+<section class="card income-card">
+  <div class="card-header">
+    <div>
+      <h2>Monthly income capture</h2>
+      <p>Log every income stream — salary, side gigs, consulting, rentals — we convert it into a monthly view automatically.</p>
+    </div>
+    <div class="income-totals">
+      <p class="muted">Total monthly earnings</p>
+      <p class="highlight">₹{{ '%.2f'|format(total_income) }}</p>
+      <p class="muted">After minimum debt payments: ₹{{ '%.2f'|format(net_after_minimums) }}</p>
+    </div>
+  </div>
+
+  <form action="{{ url_for('add_income') }}" method="post" class="inline-form income-form">
+    <input type="text" name="source" placeholder="Source (e.g. Salary, Freelance)" required>
+    <input type="number" name="amount" placeholder="Amount" min="0" step="0.01" required>
+    <select name="frequency">
+      <option value="monthly">Monthly</option>
+      <option value="biweekly">Bi-weekly</option>
+      <option value="weekly">Weekly</option>
+      <option value="daily">Daily</option>
+      <option value="quarterly">Quarterly</option>
+      <option value="yearly">Yearly</option>
+    </select>
+    <button type="submit" class="primary">Add income</button>
+  </form>
+
+  <table class="debt-table income-table">
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Base amount</th>
+        <th>Frequency</th>
+        <th>Monthly equivalent</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if incomes %}
+        {% for income in incomes %}
+        <tr>
+          <td>{{ income.source }}</td>
+          <td>₹{{ '%.2f'|format(income.amount) }}</td>
+          <td class="muted">{{ income.frequency|capitalize }}</td>
+          <td>₹{{ '%.2f'|format(income.monthly_amount) }}</td>
+          <td>
+            <form action="{{ url_for('delete_income', income_id=income.id) }}" method="post">
+              <button class="ghost">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="5" class="empty-state">Document your income sources to understand cash flow.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
 </section>
 {% endblock %}
