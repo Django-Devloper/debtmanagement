@@ -1,0 +1,190 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="card">
+  <div class="card-header">
+    <div>
+      <h1>{{ current_user.name.split(' ')[0] }}'s active debts</h1>
+      <p>Track every outstanding balance and see how the snowball accelerates your payoff journey.</p>
+    </div>
+    <form action="{{ url_for('add_debt') }}" method="post" class="inline-form">
+      <input type="text" name="debt_type" placeholder="Type" required>
+      <input type="text" name="creditor" placeholder="Creditor" required>
+      <input type="number" name="outstanding_amount" placeholder="Outstanding" min="0" step="0.01" required>
+      <input type="number" name="interest_rate" placeholder="Interest %" min="0" step="0.01" required>
+      <input type="number" name="emi" placeholder="EMI" min="0" step="0.01" required>
+      <input type="number" name="minimum_due" placeholder="Minimum" min="0" step="0.01" required>
+      <button type="submit" class="primary">Add</button>
+    </form>
+  </div>
+
+  <table class="debt-table">
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Creditor</th>
+        <th>Outstanding</th>
+        <th>Interest</th>
+        <th>EMI</th>
+        <th>Minimum</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if debts %}
+        {% for debt in debts %}
+        <tr>
+          <td>{{ debt.debt_type }}</td>
+          <td>{{ debt.creditor }}</td>
+          <td>₹{{ '%.2f'|format(debt.outstanding_amount) }}</td>
+          <td>{{ '%.2f'|format(debt.interest_rate) }}%</td>
+          <td>₹{{ '%.2f'|format(debt.emi) }}</td>
+          <td>₹{{ '%.2f'|format(debt.minimum_due) }}</td>
+          <td>
+            <form action="{{ url_for('delete_debt', debt_id=debt.id) }}" method="post">
+              <button class="ghost">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="7" class="empty-state">Start by adding your debts above.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<section class="grid">
+  <article class="card">
+    <div class="card-header">
+      <div>
+        <h2>Snowball Strategy in Progress</h2>
+        <p>Focus on one debt at a time while paying minimums on the rest.</p>
+        <p class="muted">Extra payment budget: ₹{{ '%.0f'|format(current_user.monthly_extra_payment) }} / month</p>
+      </div>
+      <form action="{{ url_for('payoff_top_debt') }}" method="post">
+        <button class="primary">Pay off</button>
+      </form>
+    </div>
+
+    {% if top_debt %}
+      <div class="focus-card">
+        <p class="tag">Next up</p>
+        <h3>{{ top_debt.creditor }} <span>{{ top_debt.debt_type }}</span></h3>
+        <dl>
+          <div><dt>Balance</dt><dd>₹{{ '%.2f'|format(top_debt.outstanding_amount) }}</dd></div>
+          <div><dt>Interest</dt><dd>{{ '%.2f'|format(top_debt.interest_rate) }}%</dd></div>
+          <div><dt>Minimum Due</dt><dd>₹{{ '%.2f'|format(top_debt.minimum_due) }}</dd></div>
+          <div><dt>EMI</dt><dd>₹{{ '%.2f'|format(top_debt.emi) }}</dd></div>
+        </dl>
+      </div>
+    {% else %}
+      <p class="empty-state">Add debts to see your snowball strategy.</p>
+    {% endif %}
+
+    <ul class="payoff-list">
+      {% for creditor, months in snowball.payoff_order %}
+        <li>
+          <span>{{ creditor }}</span>
+          <span>{{ months }} month{{ 's' if months != 1 }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <article class="card">
+    <h2>Debt payoff calculator</h2>
+    <p>Experiment with extra payments and interest to see how quickly you could be debt-free.</p>
+    <form class="calculator" id="payoff-calculator">
+      <label>
+        Total Balance
+        <input type="number" name="balance" placeholder="250000" min="0" step="100">
+      </label>
+      <label>
+        Interest %
+        <input type="number" name="rate" placeholder="12" min="0" step="0.01">
+      </label>
+      <label>
+        Monthly payment
+        <input type="number" name="payment" placeholder="15000" min="0" step="100">
+      </label>
+      <button type="submit" class="primary full">Calculate</button>
+    </form>
+    <p class="calculator-result" id="payoff-result">Enter values above to see the projection.</p>
+  </article>
+</section>
+
+<section class="card">
+  <h2>Payoff Progress</h2>
+  <p>Total outstanding: ₹{{ '%.2f'|format(snowball.total_balance) }} | Minimums: ₹{{ '%.2f'|format(snowball.total_minimums) }}</p>
+  <p class="muted">Personalized for {{ current_user.name }} — tweak your extra payment from the profile page to see updated projections.</p>
+  <div class="progress">
+    {% set progress = 0 if snowball.projected_months == 0 else ((snowball.payoff_order|length) / max(debts|length, 1)) * 100 %}
+    <div class="progress-bar" style="width: {{ progress }}%"></div>
+  </div>
+  <p class="progress-copy">You're going to be debt free in {{ snowball.projected_months }} months.</p>
+</section>
+
+<section class="card income-card">
+  <div class="card-header">
+    <div>
+      <h2>Monthly income capture</h2>
+      <p>Log every income stream — salary, side gigs, consulting, rentals — we convert it into a monthly view automatically.</p>
+    </div>
+    <div class="income-totals">
+      <p class="muted">Total monthly earnings</p>
+      <p class="highlight">₹{{ '%.2f'|format(total_income) }}</p>
+      <p class="muted">After minimum debt payments: ₹{{ '%.2f'|format(net_after_minimums) }}</p>
+    </div>
+  </div>
+
+  <form action="{{ url_for('add_income') }}" method="post" class="inline-form income-form">
+    <input type="text" name="source" placeholder="Source (e.g. Salary, Freelance)" required>
+    <input type="number" name="amount" placeholder="Amount" min="0" step="0.01" required>
+    <select name="frequency">
+      <option value="monthly">Monthly</option>
+      <option value="biweekly">Bi-weekly</option>
+      <option value="weekly">Weekly</option>
+      <option value="daily">Daily</option>
+      <option value="quarterly">Quarterly</option>
+      <option value="yearly">Yearly</option>
+    </select>
+    <button type="submit" class="primary">Add income</button>
+  </form>
+
+  <table class="debt-table income-table">
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Base amount</th>
+        <th>Frequency</th>
+        <th>Monthly equivalent</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if incomes %}
+        {% for income in incomes %}
+        <tr>
+          <td>{{ income.source }}</td>
+          <td>₹{{ '%.2f'|format(income.amount) }}</td>
+          <td class="muted">{{ income.frequency|capitalize }}</td>
+          <td>₹{{ '%.2f'|format(income.monthly_amount) }}</td>
+          <td>
+            <form action="{{ url_for('delete_income', income_id=income.id) }}" method="post">
+              <button class="ghost">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="5" class="empty-state">Document your income sources to understand cash flow.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
