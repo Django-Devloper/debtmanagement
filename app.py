@@ -1,9 +1,20 @@
 import math
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
+from functools import wraps
 from typing import Callable, Dict, List, Tuple
 
-from flask import Flask, redirect, render_template, request, url_for, flash, jsonify
+import jwt
+from flask import (
+    Flask,
+    redirect,
+    render_template,
+    request,
+    url_for,
+    flash,
+    jsonify,
+    g,
+)
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -20,11 +31,67 @@ app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///snowball.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.secret_key = "snowball-secret"
+app.config["JWT_SECRET_KEY"] = "snowball-api-secret"
+app.config["JWT_EXPIRATION_MINUTES"] = 60 * 12  # 12 hours
 
 db = SQLAlchemy(app)
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
+
+
+def generate_access_token(user: "User") -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user.id),
+        "email": user.email,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=app.config["JWT_EXPIRATION_MINUTES"])).timestamp()),
+    }
+    token = jwt.encode(payload, app.config["JWT_SECRET_KEY"], algorithm="HS256")
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+    return token
+
+
+def _decode_access_token(token: str):
+    return jwt.decode(
+        token,
+        app.config["JWT_SECRET_KEY"],
+        algorithms=["HS256"],
+        options={"require": ["sub", "exp", "iat"]},
+    )
+
+
+def jwt_required(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return _json_error("Missing or invalid Authorization header.", status=401)
+        token = auth_header.split(" ", 1)[1].strip()
+        if not token:
+            return _json_error("Missing token.", status=401)
+        try:
+            payload = _decode_access_token(token)
+        except jwt.ExpiredSignatureError:
+            return _json_error("Token has expired.", status=401)
+        except jwt.InvalidTokenError:
+            return _json_error("Invalid token.", status=401)
+
+        try:
+            user_id = int(payload.get("sub"))
+        except (TypeError, ValueError):
+            return _json_error("Invalid token subject.", status=401)
+
+        user = User.query.get(user_id)
+        if not user or user.email != payload.get("email"):
+            return _json_error("User not found.", status=401)
+
+        g.api_user = user
+        return view_func(*args, **kwargs)
+
+    return wrapper
 
 
 FREQUENCY_FACTORS = {
@@ -392,26 +459,47 @@ def new_debt():
     return render_template("new_debt.html")
 
 
+@app.route("/api/v1/auth/token", methods=["POST"])
+def api_v1_auth_token():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if not email or not password:
+        return _json_error("Email and password are required.")
+
+    user = User.query.filter_by(email=email).first()
+    if not user or not user.check_password(password):
+        return _json_error("Invalid credentials.", status=401)
+
+    token = generate_access_token(user)
+    return jsonify(
+        {
+            "access_token": token,
+            "token_type": "Bearer",
+            "expires_in": app.config["JWT_EXPIRATION_MINUTES"] * 60,
+        }
+    )
+
+
 @app.route("/api/debts")
-@login_required
+@jwt_required
 def api_debts():
-    return jsonify(build_financial_snapshot(current_user))
+    return jsonify(build_financial_snapshot(g.api_user))
 
 
 @app.route("/api/v1/summary")
-@login_required
+@jwt_required
 def api_v1_summary():
-    return jsonify(build_financial_snapshot(current_user))
+    return jsonify(build_financial_snapshot(g.api_user))
 
 
 @app.route("/api/v1/strategies")
-@login_required
+@jwt_required
 def api_v1_strategies():
-    debts = Debt.query.filter_by(user_id=current_user.id).all()
-    snowball = calculate_snowball(debts, extra_payment=current_user.monthly_extra_payment)
-    avalanche = calculate_avalanche(
-        debts, extra_payment=current_user.monthly_extra_payment
-    )
+    user = g.api_user
+    debts = Debt.query.filter_by(user_id=user.id).all()
+    snowball = calculate_snowball(debts, extra_payment=user.monthly_extra_payment)
+    avalanche = calculate_avalanche(debts, extra_payment=user.monthly_extra_payment)
     return jsonify(
         {
             "strategies": {
@@ -424,11 +512,12 @@ def api_v1_strategies():
 
 
 @app.route("/api/v1/debts", methods=["GET", "POST"])
-@login_required
+@jwt_required
 def api_v1_debts():
+    user = g.api_user
     if request.method == "GET":
         debts = (
-            Debt.query.filter_by(user_id=current_user.id)
+            Debt.query.filter_by(user_id=user.id)
             .order_by(Debt.outstanding_amount.asc())
             .all()
         )
@@ -471,7 +560,7 @@ def api_v1_debts():
         interest_rate=rate,
         emi=emi,
         minimum_due=minimum,
-        user_id=current_user.id,
+        user_id=user.id,
     )
     db.session.add(debt)
     db.session.commit()
@@ -479,9 +568,9 @@ def api_v1_debts():
 
 
 @app.route("/api/v1/debts/<int:debt_id>", methods=["DELETE"])
-@login_required
+@jwt_required
 def api_v1_delete_debt(debt_id):
-    debt = Debt.query.filter_by(id=debt_id, user_id=current_user.id).first()
+    debt = Debt.query.filter_by(id=debt_id, user_id=g.api_user.id).first()
     if not debt:
         return _json_error("Debt not found.", status=404)
     db.session.delete(debt)
@@ -490,11 +579,12 @@ def api_v1_delete_debt(debt_id):
 
 
 @app.route("/api/v1/incomes", methods=["GET", "POST"])
-@login_required
+@jwt_required
 def api_v1_incomes():
+    user = g.api_user
     if request.method == "GET":
         incomes = (
-            Income.query.filter_by(user_id=current_user.id)
+            Income.query.filter_by(user_id=user.id)
             .order_by(Income.created_at.desc())
             .all()
         )
@@ -516,7 +606,7 @@ def api_v1_incomes():
         source=source,
         amount=amount,
         frequency=frequency,
-        user_id=current_user.id,
+        user_id=user.id,
     )
     db.session.add(income)
     db.session.commit()
@@ -524,9 +614,9 @@ def api_v1_incomes():
 
 
 @app.route("/api/v1/incomes/<int:income_id>", methods=["DELETE"])
-@login_required
+@jwt_required
 def api_v1_delete_income(income_id):
-    income = Income.query.filter_by(id=income_id, user_id=current_user.id).first()
+    income = Income.query.filter_by(id=income_id, user_id=g.api_user.id).first()
     if not income:
         return _json_error("Income not found.", status=404)
     db.session.delete(income)
@@ -535,11 +625,12 @@ def api_v1_delete_income(income_id):
 
 
 @app.route("/api/v1/goals", methods=["GET", "POST"])
-@login_required
+@jwt_required
 def api_v1_goals():
+    user = g.api_user
     if request.method == "GET":
         goals = (
-            SavingsGoal.query.filter_by(user_id=current_user.id)
+            SavingsGoal.query.filter_by(user_id=user.id)
             .order_by(SavingsGoal.created_at.desc())
             .all()
         )
@@ -562,7 +653,7 @@ def api_v1_goals():
         target_amount=target_amount,
         current_amount=current_amount,
         target_date=_parse_date(data.get("target_date")),
-        user_id=current_user.id,
+        user_id=user.id,
     )
     db.session.add(goal)
     db.session.commit()
@@ -570,9 +661,9 @@ def api_v1_goals():
 
 
 @app.route("/api/v1/goals/<int:goal_id>", methods=["PATCH", "DELETE"])
-@login_required
+@jwt_required
 def api_v1_goal_detail(goal_id):
-    goal = SavingsGoal.query.filter_by(id=goal_id, user_id=current_user.id).first()
+    goal = SavingsGoal.query.filter_by(id=goal_id, user_id=g.api_user.id).first()
     if not goal:
         return _json_error("Goal not found.", status=404)
 

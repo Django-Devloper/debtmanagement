@@ -15,14 +15,15 @@ A minimal full-stack implementation of the snowball debt payoff concept. The pro
 - Interactive debt payoff calculator for experimenting with balances, rates, and payments.
 - Multi-step capture experience for adding debts on mobile.
 - Profile page to update your name, email, and monthly extra snowball contribution.
-- Omni-channel JSON API (authenticated) for debts, incomes, savings goals, payoff strategies, and aggregated summaries to power other clients.
+- Omni-channel JSON API protected by JWT bearer tokens for debts, incomes, savings goals, payoff strategies, and aggregated summaries to power other clients.
 
 ## API surface
 
-Every endpoint requires an authenticated session (obtain via the regular login form or by attaching the session cookie in your client).
+Every endpoint requires a valid JWT bearer token. Obtain a token by POSTing valid credentials to `/api/v1/auth/token`, then include the header `Authorization: Bearer <token>` with each subsequent request. Tokens expire after 12 hours; simply request a new token when needed.
 
 | Endpoint | Method(s) | Description |
 | --- | --- | --- |
+| `/api/v1/auth/token` | POST | Exchange email/password credentials for a short-lived JWT token. |
 | `/api/v1/summary` | GET | Returns the complete financial snapshot (user profile, debts, incomes, goals, strategies, cash-flow insights). |
 | `/api/v1/strategies` | GET | Snowball and avalanche payoff projections only. |
 | `/api/v1/debts` | GET/POST | List debts or create a new debt (JSON body mirrors the dashboard form). |
@@ -32,21 +33,42 @@ Every endpoint requires an authenticated session (obtain via the regular login f
 | `/api/v1/goals` | GET/POST | List or create savings goals with optional `target_date`. |
 | `/api/v1/goals/<id>` | PATCH/DELETE | Update goal details/progress or delete the goal. |
 
-The legacy `/api/debts` endpoint now returns the same snapshot as `/api/v1/summary` for backward compatibility.
+The legacy `/api/debts` endpoint now returns the same snapshot as `/api/v1/summary` for backward compatibility and is also JWT-protected.
 
 ### Authentication & headers
 
-1. POST valid credentials to `/login` (form fields `email` + `password`).
-2. Persist the returned session cookie (e.g., `session=.eJx...`).
-3. Attach the cookie to every subsequent API request (`Cookie: session=...`).
+1. Register via the UI (or an admin tool) to create credentials.
+2. Request a token:
 
-The APIs respond with `401 Unauthorized` if the cookie is missing/invalid and `403 Forbidden` if the session is valid but the referenced resource belongs to another user.
+   ```bash
+   curl -X POST http://127.0.0.1:5000/api/v1/auth/token \
+     -H "Content-Type: application/json" \
+     -d '{"email": "avery@example.com", "password": "secret"}'
+   ```
+
+   ```json
+   {
+     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+     "token_type": "Bearer",
+     "expires_in": 43200
+   }
+   ```
+
+3. Attach the header `Authorization: Bearer <access_token>` to every API request.
+
+The APIs respond with `401 Unauthorized` if the token is missing/invalid/expired and `404 Not Found` if the referenced resource does not belong to the authenticated user.
 
 ### Common payloads
 
 All JSON bodies follow snake_case fields:
 
 ```jsonc
+// POST /api/v1/auth/token
+{
+  "email": "avery@example.com",
+  "password": "secret"
+}
+
 // POST /api/v1/debts
 {
   "debt_type": "credit_card",
