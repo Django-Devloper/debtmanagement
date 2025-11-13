@@ -230,4 +230,81 @@
     </tbody>
   </table>
 </section>
+
+<section class="card goal-card">
+  <div class="card-header">
+    <div>
+      <h2>Financial planning goals</h2>
+      <p>Track emergency funds, travel plans, and other priorities alongside your debt payoff progress.</p>
+    </div>
+    <div class="goal-insights">
+      <p class="muted">Emergency fund target (3× minimums)</p>
+      <p class="highlight">₹{{ '%.2f'|format(emergency_target) }}</p>
+      <p class="muted">Currently allocated: ₹{{ '%.2f'|format(goal_savings_total) }}</p>
+      {% if emergency_gap > 0 %}
+        <p class="gap">Add ₹{{ '%.2f'|format(emergency_gap) }} to hit the recommendation.</p>
+      {% else %}
+        <p class="success">Goal met — keep building wealth!</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <form action="{{ url_for('add_goal') }}" method="post" class="inline-form goal-form">
+    <input type="text" name="name" placeholder="Goal name (e.g. Emergency fund)" required>
+    <input type="number" name="target_amount" placeholder="Target amount" min="0" step="0.01" required>
+    <input type="number" name="current_amount" placeholder="Current saved" min="0" step="0.01">
+    <label class="date-label">
+      Target date
+      <input type="date" name="target_date">
+    </label>
+    <button type="submit" class="primary">Save goal</button>
+  </form>
+
+  <table class="debt-table goal-table">
+    <thead>
+      <tr>
+        <th>Goal</th>
+        <th>Target</th>
+        <th>Saved</th>
+        <th>Remaining</th>
+        <th>Plan</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if goals %}
+        {% for goal in goals %}
+        <tr>
+          <td>
+            <div class="goal-title">{{ goal.name }}</div>
+            <div class="goal-progress">
+              <div class="goal-progress-bar" style="width: {{ '%.0f'|format(goal.progress_percent) }}%"></div>
+            </div>
+          </td>
+          <td>₹{{ '%.2f'|format(goal.target_amount) }}</td>
+          <td>₹{{ '%.2f'|format(goal.current_amount) }}</td>
+          <td>₹{{ '%.2f'|format(goal.remaining_amount) }}</td>
+          <td>
+            {% if goal.target_date %}
+              <p class="muted">Target {{ goal.target_date.strftime('%d %b %Y') }}</p>
+            {% else %}
+              <p class="muted">Flexible timeline</p>
+            {% endif %}
+            <p class="highlight">₹{{ '%.2f'|format(goal.recommended_monthly) }} / month</p>
+          </td>
+          <td>
+            <form action="{{ url_for('delete_goal', goal_id=goal.id) }}" method="post">
+              <button class="ghost">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="6" class="empty-state">Start a savings goal to plan for emergencies and future projects.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Callable, List, Tuple
+from datetime import date, datetime
+from typing import Callable, Dict, List, Tuple
 
 from flask import Flask, redirect, render_template, request, url_for, flash, jsonify
 from flask_login import (
@@ -50,6 +50,9 @@ class User(UserMixin, db.Model):
     debts = db.relationship("Debt", back_populates="user", cascade="all, delete-orphan")
     incomes = db.relationship(
         "Income", back_populates="user", cascade="all, delete-orphan"
+    )
+    goals = db.relationship(
+        "SavingsGoal", back_populates="user", cascade="all, delete-orphan"
     )
 
     def set_password(self, password: str) -> None:
@@ -111,6 +114,60 @@ class Income(db.Model):
             "amount": self.amount,
             "frequency": self.frequency,
             "monthly_amount": self.monthly_amount,
+        }
+
+
+class SavingsGoal(db.Model):
+    __tablename__ = "savings_goals"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False)
+    target_amount = db.Column(db.Float, nullable=False)
+    current_amount = db.Column(db.Float, nullable=False, default=0.0)
+    target_date = db.Column(db.Date, nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship("User", back_populates="goals")
+
+    @property
+    def remaining_amount(self) -> float:
+        return max(self.target_amount - self.current_amount, 0.0)
+
+    @property
+    def months_remaining(self) -> int:
+        if not self.target_date:
+            return 0
+        today = datetime.utcnow().date()
+        if self.target_date <= today:
+            return 0
+        return months_between(today, self.target_date)
+
+    @property
+    def recommended_monthly(self) -> float:
+        if self.months_remaining == 0:
+            if self.remaining_amount == 0:
+                return 0.0
+            return self.remaining_amount
+        return self.remaining_amount / self.months_remaining
+
+    @property
+    def progress_percent(self) -> float:
+        if self.target_amount <= 0:
+            return 0.0
+        return min((self.current_amount / self.target_amount) * 100, 100.0)
+
+    def as_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "target_amount": self.target_amount,
+            "current_amount": self.current_amount,
+            "remaining_amount": self.remaining_amount,
+            "target_date": self.target_date.isoformat() if self.target_date else None,
+            "months_remaining": self.months_remaining,
+            "recommended_monthly": self.recommended_monthly,
+            "progress_percent": self.progress_percent,
         }
 
 
@@ -191,6 +248,12 @@ def ensure_debt_user_column():
         )
 
 
+def months_between(start: date, end: date) -> int:
+    """Rough month delta between two dates."""
+
+    return max((end.year - start.year) * 12 + (end.month - start.month), 0)
+
+
 def setup_db():
     """Ensure database tables exist before handling requests."""
     with app.app_context():
@@ -220,6 +283,11 @@ def dashboard():
         .order_by(Income.created_at.desc())
         .all()
     )
+    goals = (
+        SavingsGoal.query.filter_by(user_id=current_user.id)
+        .order_by(SavingsGoal.target_date.is_(None), SavingsGoal.target_date.asc())
+        .all()
+    )
     snowball = calculate_snowball(
         debts, extra_payment=current_user.monthly_extra_payment
     )
@@ -237,6 +305,9 @@ def dashboard():
 
     snowball_sequence = [creditor for creditor, _ in snowball.payoff_order]
     avalanche_sequence = [creditor for creditor, _ in avalanche.payoff_order]
+    emergency_target = round(snowball.total_minimums * 3, 2)
+    goal_savings_total = sum(goal.current_amount for goal in goals)
+    emergency_gap = max(emergency_target - goal_savings_total, 0)
 
     return render_template(
         "dashboard.html",
@@ -250,6 +321,10 @@ def dashboard():
         total_income=total_income,
         net_after_minimums=net_after_minimums,
         progress=progress,
+        goals=goals,
+        emergency_target=emergency_target,
+        emergency_gap=emergency_gap,
+        goal_savings_total=goal_savings_total,
     )
 
 
@@ -257,13 +332,21 @@ def dashboard():
 @login_required
 def add_debt():
     try:
+        outstanding = float(request.form["outstanding_amount"])
+        rate = float(request.form.get("interest_rate", 0) or 0)
+        emi = float(request.form.get("emi", 0) or 0)
+        minimum = float(request.form.get("minimum_due", 0) or 0)
+        if outstanding <= 0:
+            raise ValueError
+        if rate < 0 or emi < 0 or minimum < 0:
+            raise ValueError
         debt = Debt(
             debt_type=request.form["debt_type"],
             creditor=request.form["creditor"],
-            outstanding_amount=float(request.form["outstanding_amount"]),
-            interest_rate=float(request.form.get("interest_rate", 0) or 0),
-            emi=float(request.form.get("emi", 0) or 0),
-            minimum_due=float(request.form.get("minimum_due", 0) or 0),
+            outstanding_amount=outstanding,
+            interest_rate=rate,
+            emi=emi,
+            minimum_due=minimum,
             user_id=current_user.id,
         )
         db.session.add(debt)
@@ -312,44 +395,297 @@ def new_debt():
 @app.route("/api/debts")
 @login_required
 def api_debts():
-    debts = (
-        Debt.query.filter_by(user_id=current_user.id)
-        .order_by(Debt.outstanding_amount.asc())
-        .all()
-    )
-    incomes = (
-        Income.query.filter_by(user_id=current_user.id)
-        .order_by(Income.created_at.desc())
-        .all()
-    )
-    snowball = calculate_snowball(
-        debts, extra_payment=current_user.monthly_extra_payment
-    )
+    return jsonify(build_financial_snapshot(current_user))
+
+
+@app.route("/api/v1/summary")
+@login_required
+def api_v1_summary():
+    return jsonify(build_financial_snapshot(current_user))
+
+
+@app.route("/api/v1/strategies")
+@login_required
+def api_v1_strategies():
+    debts = Debt.query.filter_by(user_id=current_user.id).all()
+    snowball = calculate_snowball(debts, extra_payment=current_user.monthly_extra_payment)
     avalanche = calculate_avalanche(
         debts, extra_payment=current_user.monthly_extra_payment
     )
     return jsonify(
         {
-            "debts": [d.as_dict() for d in debts],
-            "summary": payoff_summary_payload(snowball),
             "strategies": {
                 "snowball": payoff_summary_payload(snowball),
                 "avalanche": payoff_summary_payload(avalanche),
             },
-            "user": {
-                "name": current_user.name,
-                "email": current_user.email,
-                "monthly_extra_payment": current_user.monthly_extra_payment,
-            },
-            "incomes": [income.as_dict() for income in incomes],
-            "total_income": sum(income.monthly_amount for income in incomes),
+            "api_version": 1,
         }
     )
+
+
+@app.route("/api/v1/debts", methods=["GET", "POST"])
+@login_required
+def api_v1_debts():
+    if request.method == "GET":
+        debts = (
+            Debt.query.filter_by(user_id=current_user.id)
+            .order_by(Debt.outstanding_amount.asc())
+            .all()
+        )
+        return jsonify({"debts": [d.as_dict() for d in debts]})
+
+    data = request.get_json(silent=True) or {}
+    required = [
+        "debt_type",
+        "creditor",
+        "outstanding_amount",
+        "interest_rate",
+        "emi",
+        "minimum_due",
+    ]
+    missing = [
+        field
+        for field in required
+        if field not in data or data.get(field) in (None, "")
+    ]
+    if missing:
+        return _json_error(f"Missing fields: {', '.join(missing)}")
+
+    try:
+        outstanding = float(data.get("outstanding_amount", 0))
+        rate = float(data.get("interest_rate", 0))
+        emi = float(data.get("emi", 0))
+        minimum = float(data.get("minimum_due", 0))
+    except (TypeError, ValueError):
+        return _json_error("Amounts must be numeric.")
+
+    if outstanding <= 0:
+        return _json_error("Outstanding amount must be greater than zero.")
+    if rate < 0 or emi < 0 or minimum < 0:
+        return _json_error("Rates and payments must be zero or positive.")
+
+    debt = Debt(
+        debt_type=data["debt_type"],
+        creditor=data["creditor"],
+        outstanding_amount=outstanding,
+        interest_rate=rate,
+        emi=emi,
+        minimum_due=minimum,
+        user_id=current_user.id,
+    )
+    db.session.add(debt)
+    db.session.commit()
+    return jsonify({"debt": debt.as_dict()}), 201
+
+
+@app.route("/api/v1/debts/<int:debt_id>", methods=["DELETE"])
+@login_required
+def api_v1_delete_debt(debt_id):
+    debt = Debt.query.filter_by(id=debt_id, user_id=current_user.id).first()
+    if not debt:
+        return _json_error("Debt not found.", status=404)
+    db.session.delete(debt)
+    db.session.commit()
+    return jsonify({"status": "deleted"})
+
+
+@app.route("/api/v1/incomes", methods=["GET", "POST"])
+@login_required
+def api_v1_incomes():
+    if request.method == "GET":
+        incomes = (
+            Income.query.filter_by(user_id=current_user.id)
+            .order_by(Income.created_at.desc())
+            .all()
+        )
+        return jsonify({"incomes": [income.as_dict() for income in incomes]})
+
+    data = request.get_json(silent=True) or {}
+    source = (data.get("source") or "").strip()
+    if not source:
+        return _json_error("Income source is required.")
+    frequency = _validated_frequency(data.get("frequency", "monthly"))
+    try:
+        amount = float(data.get("amount", 0))
+    except (TypeError, ValueError):
+        return _json_error("Income amount must be numeric.")
+    if amount <= 0:
+        return _json_error("Income amount must be greater than zero.")
+
+    income = Income(
+        source=source,
+        amount=amount,
+        frequency=frequency,
+        user_id=current_user.id,
+    )
+    db.session.add(income)
+    db.session.commit()
+    return jsonify({"income": income.as_dict()}), 201
+
+
+@app.route("/api/v1/incomes/<int:income_id>", methods=["DELETE"])
+@login_required
+def api_v1_delete_income(income_id):
+    income = Income.query.filter_by(id=income_id, user_id=current_user.id).first()
+    if not income:
+        return _json_error("Income not found.", status=404)
+    db.session.delete(income)
+    db.session.commit()
+    return jsonify({"status": "deleted"})
+
+
+@app.route("/api/v1/goals", methods=["GET", "POST"])
+@login_required
+def api_v1_goals():
+    if request.method == "GET":
+        goals = (
+            SavingsGoal.query.filter_by(user_id=current_user.id)
+            .order_by(SavingsGoal.created_at.desc())
+            .all()
+        )
+        return jsonify({"goals": [goal.as_dict() for goal in goals]})
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return _json_error("Goal name is required.")
+    try:
+        target_amount = float(data.get("target_amount", 0))
+        current_amount = float(data.get("current_amount", 0))
+    except (TypeError, ValueError):
+        return _json_error("Amounts must be numeric.")
+    if target_amount <= 0:
+        return _json_error("Target amount must be greater than zero.")
+    current_amount = max(min(current_amount, target_amount), 0)
+    goal = SavingsGoal(
+        name=name,
+        target_amount=target_amount,
+        current_amount=current_amount,
+        target_date=_parse_date(data.get("target_date")),
+        user_id=current_user.id,
+    )
+    db.session.add(goal)
+    db.session.commit()
+    return jsonify({"goal": goal.as_dict()}), 201
+
+
+@app.route("/api/v1/goals/<int:goal_id>", methods=["PATCH", "DELETE"])
+@login_required
+def api_v1_goal_detail(goal_id):
+    goal = SavingsGoal.query.filter_by(id=goal_id, user_id=current_user.id).first()
+    if not goal:
+        return _json_error("Goal not found.", status=404)
+
+    if request.method == "DELETE":
+        db.session.delete(goal)
+        db.session.commit()
+        return jsonify({"status": "deleted"})
+
+    data = request.get_json(silent=True) or {}
+    updated = False
+    if "name" in data and isinstance(data.get("name"), str):
+        goal.name = data["name"].strip() or goal.name
+        updated = True
+    if "target_amount" in data:
+        try:
+            target_amount = float(data["target_amount"])
+        except (TypeError, ValueError):
+            return _json_error("target_amount must be numeric.")
+        if target_amount <= 0:
+            return _json_error("target_amount must be greater than zero.")
+        goal.target_amount = target_amount
+        updated = True
+    if "current_amount" in data:
+        try:
+            current_amount = float(data["current_amount"])
+        except (TypeError, ValueError):
+            return _json_error("current_amount must be numeric.")
+        goal.current_amount = max(min(current_amount, goal.target_amount), 0)
+        updated = True
+    if "target_date" in data:
+        parsed = _parse_date(data.get("target_date"))
+        goal.target_date = parsed
+        updated = True
+
+    if updated:
+        db.session.commit()
+    return jsonify({"goal": goal.as_dict()})
 
 
 def _validated_frequency(value: str) -> str:
     value = (value or "monthly").lower()
     return value if value in FREQUENCY_FACTORS else "monthly"
+
+
+def _parse_date(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _json_error(message: str, status: int = 400):
+    return jsonify({"error": message}), status
+
+
+def build_financial_snapshot(user: User) -> Dict[str, object]:
+    debts = (
+        Debt.query.filter_by(user_id=user.id)
+        .order_by(Debt.outstanding_amount.asc())
+        .all()
+    )
+    incomes = (
+        Income.query.filter_by(user_id=user.id)
+        .order_by(Income.created_at.desc())
+        .all()
+    )
+    goals = (
+        SavingsGoal.query.filter_by(user_id=user.id)
+        .order_by(SavingsGoal.created_at.desc())
+        .all()
+    )
+    snowball = calculate_snowball(debts, extra_payment=user.monthly_extra_payment)
+    avalanche = calculate_avalanche(debts, extra_payment=user.monthly_extra_payment)
+    total_income = sum(income.monthly_amount for income in incomes)
+    net_after_minimums = total_income - snowball.total_minimums
+    debt_count = len(debts)
+    payoff_steps = len(snowball.payoff_order)
+    progress = (payoff_steps / debt_count) * 100 if debt_count else 0.0
+    goal_savings_total = sum(goal.current_amount for goal in goals)
+    emergency_target = round(snowball.total_minimums * 3, 2)
+    emergency_gap = max(emergency_target - goal_savings_total, 0)
+
+    return {
+        "api_version": 1,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "monthly_extra_payment": user.monthly_extra_payment,
+        },
+        "debts": [debt.as_dict() for debt in debts],
+        "incomes": [income.as_dict() for income in incomes],
+        "goals": [goal.as_dict() for goal in goals],
+        "strategies": {
+            "snowball": payoff_summary_payload(snowball),
+            "avalanche": payoff_summary_payload(avalanche),
+        },
+        "cash_flow": {
+            "total_income": total_income,
+            "total_minimums": snowball.total_minimums,
+            "net_after_minimums": net_after_minimums,
+            "progress_percent": progress,
+        },
+        "insights": {
+            "recommended_emergency_fund": emergency_target,
+            "emergency_gap": emergency_gap,
+            "goal_savings_total": goal_savings_total,
+            "goal_count": len(goals),
+        },
+    }
 
 
 @app.route("/incomes", methods=["POST"])
@@ -392,6 +728,54 @@ def delete_income(income_id):
     db.session.delete(income)
     db.session.commit()
     flash("Income removed.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/goals", methods=["POST"])
+@login_required
+def add_goal():
+    name = request.form.get("name", "").strip()
+    target_raw = request.form.get("target_amount", "0").strip()
+    current_raw = request.form.get("current_amount", "0").strip()
+    date_raw = request.form.get("target_date", "").strip()
+
+    if not name:
+        flash("Goal name is required.", "error")
+        return redirect(url_for("dashboard"))
+
+    try:
+        target_amount = float(target_raw)
+        current_amount = float(current_raw or 0)
+    except ValueError:
+        flash("Amounts must be numeric.", "error")
+        return redirect(url_for("dashboard"))
+
+    if target_amount <= 0:
+        flash("Target amount must be greater than zero.", "error")
+        return redirect(url_for("dashboard"))
+
+    current_amount = max(min(current_amount, target_amount), 0)
+
+    goal = SavingsGoal(
+        name=name,
+        target_amount=target_amount,
+        current_amount=current_amount,
+        target_date=_parse_date(date_raw),
+        user_id=current_user.id,
+    )
+    db.session.add(goal)
+    db.session.commit()
+    flash("Savings goal captured.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/goals/<int:goal_id>/delete", methods=["POST"])
+@login_required
+def delete_goal(goal_id):
+    goal = SavingsGoal.query.filter_by(id=goal_id, user_id=current_user.id).first_or_404()
+    db.session.delete(goal)
+    db.session.commit()
+    flash("Goal removed.", "success")
     return redirect(url_for("dashboard"))
 
 
