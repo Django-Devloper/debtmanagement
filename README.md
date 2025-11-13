@@ -34,6 +34,69 @@ Every endpoint requires an authenticated session (obtain via the regular login f
 
 The legacy `/api/debts` endpoint now returns the same snapshot as `/api/v1/summary` for backward compatibility.
 
+### Authentication & headers
+
+1. POST valid credentials to `/login` (form fields `email` + `password`).
+2. Persist the returned session cookie (e.g., `session=.eJx...`).
+3. Attach the cookie to every subsequent API request (`Cookie: session=...`).
+
+The APIs respond with `401 Unauthorized` if the cookie is missing/invalid and `403 Forbidden` if the session is valid but the referenced resource belongs to another user.
+
+### Common payloads
+
+All JSON bodies follow snake_case fields:
+
+```jsonc
+// POST /api/v1/debts
+{
+  "debt_type": "credit_card",
+  "creditor": "Amex Blue",
+  "outstanding_amount": 5400.0,
+  "interest_rate": 19.99,
+  "minimum_due": 135.0,
+  "emi": 220.0
+}
+
+// POST /api/v1/incomes
+{
+  "source": "Full-time Salary",
+  "amount": 6200.0,
+  "frequency": "monthly"
+}
+
+// POST /api/v1/goals
+{
+  "name": "Emergency fund",
+  "target_amount": 12000.0,
+  "target_date": "2025-12-31",
+  "current_amount": 4000.0
+}
+```
+
+### Response shapes
+
+`GET /api/v1/summary` bundles every planner primitive for an omni-channel client:
+
+```jsonc
+{
+  "user": {"id": 7, "name": "Avery", "email": "avery@example.com", "extra_payment": 200.0},
+  "cash_flow": {
+    "total_income": 7800.0,
+    "minimum_obligations": 1830.0,
+    "discretionary_after_minimums": 5970.0
+  },
+  "debts": [/* same objects returned by GET /api/v1/debts */],
+  "incomes": [/* same objects returned by GET /api/v1/incomes */],
+  "goals": [/* same objects returned by GET /api/v1/goals */],
+  "strategies": {
+    "snowball": {"projected_months": 27, "payoff_order": [3, 2, 5, 1]},
+    "avalanche": {"projected_months": 24, "payoff_order": [2, 5, 3, 1]}
+  }
+}
+```
+
+Collection endpoints (`/debts`, `/incomes`, `/goals`) return arrays of objects with a consistent `id`, timestamps, and any computed helpers (e.g., `monthly_amount` on incomes or `recommended_monthly` on goals). Update/delete endpoints return `{ "status": "ok" }` on success.
+
 ## Getting Started
 
 1. **Install dependencies**
